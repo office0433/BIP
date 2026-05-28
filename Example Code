@@ -1,0 +1,1549 @@
+import re
+import html
+import pandas as pd
+from snowflake.snowpark import Session
+import streamlit as st
+
+st.set_page_config(layout="wide", page_title="Project Handover Form")
+
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+* { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+
+/* ===== GLOBAL DARK THEME OVERRIDE ===== */
+html, body, [data-testid="stApp"], [data-testid="stAppViewContainer"],
+[data-testid="stHeader"], [data-testid="stMain"],
+[data-testid="stMainBlockContainer"], [data-testid="stVerticalBlock"],
+[data-testid="stHorizontalBlock"], [data-testid="stForm"],
+[data-testid="stBottomBlockContainer"], .main, .block-container,
+section[data-testid="stSidebar"], [data-testid="stSidebarContent"] {
+    background-color: #0e1117 !important; color: #fafafa !important;
+}
+[data-testid="stSidebar"] { background-color: #161b22 !important; }
+
+/* ===== ALL TEXT ELEMENTS — force light text on dark bg ===== */
+p, span, label, div, li, ul, ol, h1, h2, h3, h4, h5, h6, a,
+strong, em, b, i, small, td, th, caption, figcaption,
+[data-testid="stMarkdown"], [data-testid="stMarkdown"] p,
+[data-testid="stMarkdown"] span, [data-testid="stMarkdown"] li,
+[data-testid="stMarkdown"] strong, [data-testid="stMarkdown"] em,
+[data-testid="stMarkdown"] h1, [data-testid="stMarkdown"] h2,
+[data-testid="stMarkdown"] h3, [data-testid="stMarkdown"] h4,
+[data-testid="stText"], [data-testid="stCaptionContainer"],
+[data-testid="stCaptionContainer"] *, [class*="Caption"] {
+    color: #fafafa !important;
+}
+
+/* ===== FORM LABELS — field names must be visible ===== */
+[data-testid="stTextInput"] label,
+[data-testid="stTextInput"] label p,
+[data-testid="stTextInput"] label span,
+[data-testid="stTextArea"] label,
+[data-testid="stTextArea"] label p,
+[data-testid="stTextArea"] label span,
+[data-testid="stSelectbox"] label,
+[data-testid="stSelectbox"] label p,
+[data-testid="stSelectbox"] label span,
+[data-testid="stMultiSelect"] label,
+[data-testid="stMultiSelect"] label p,
+[data-testid="stMultiSelect"] label span,
+[data-testid="stNumberInput"] label,
+[data-testid="stNumberInput"] label p,
+[data-testid="stNumberInput"] label span,
+[data-testid="stDateInput"] label,
+[data-testid="stDateInput"] label p,
+[data-testid="stDateInput"] label span,
+[data-testid="stCheckbox"] label,
+[data-testid="stCheckbox"] label p,
+[data-testid="stCheckbox"] label span,
+[data-testid="stRadio"] label,
+[data-testid="stRadio"] label p,
+[data-testid="stRadio"] label span,
+[data-testid="stSlider"] label,
+[data-testid="stSlider"] label p,
+[data-testid="stSlider"] label span,
+[data-testid="stFileUploader"] label,
+[data-testid="stFileUploader"] label p,
+[data-testid="stFileUploader"] label span,
+.stTextInput label, .stTextArea label, .stSelectbox label,
+[data-testid="stWidgetLabel"], [data-testid="stWidgetLabel"] p,
+[data-testid="stWidgetLabel"] span {
+    color: #fafafa !important;
+}
+
+/* ===== INPUT FIELDS ===== */
+[data-testid="stSelectbox"] > div > div,
+[data-baseweb="select"] > div,
+textarea, input,
+[data-testid="stTextArea"] textarea,
+[data-testid="stTextArea"] > div,
+[data-testid="stTextInput"] > div > div,
+[data-testid="stTextInput"] input,
+[data-testid="stNumberInput"] input,
+[data-testid="stDateInput"] input {
+    background-color: #1c2030 !important; color: #fafafa !important; border-color: #3a3f52 !important;
+    border-radius: 6px !important;
+}
+input::placeholder, textarea::placeholder { color: #6b7280 !important; }
+input:focus, textarea:focus { border-color: #3b82f6 !important; box-shadow: 0 0 0 1px #3b82f6 !important; }
+/* Disabled inputs */
+input:disabled, textarea:disabled,
+[data-testid="stTextInput"] input:disabled {
+    background-color: #12151c !important; color: #8b95a5 !important;
+    border-color: #2a3040 !important; -webkit-text-fill-color: #8b95a5 !important;
+}
+
+/* ===== DROPDOWNS / POPOVER MENUS ===== */
+[data-baseweb="popover"], [data-baseweb="popover"] > div,
+[data-baseweb="menu"], [data-baseweb="menu"] li,
+ul[role="listbox"], ul[role="listbox"] li,
+[data-baseweb="select"] [data-baseweb="popover"],
+[role="option"] {
+    background-color: #1c2030 !important; color: #fafafa !important;
+}
+[data-baseweb="menu"] li:hover, ul[role="listbox"] li:hover,
+[role="option"]:hover { background-color: #2a3040 !important; }
+[data-baseweb="select"] svg { fill: #fafafa !important; }
+/* Selected option text */
+[data-baseweb="select"] [data-testid="stMarkdown"],
+[data-baseweb="select"] span,
+[data-baseweb="select"] div[class*="value"] {
+    color: #fafafa !important;
+}
+
+/* ===== TABS ===== */
+[data-testid="stTabs"] button { background-color: transparent !important; color: #8b95a5 !important; font-weight: 600 !important; font-size: 18px !important; letter-spacing: 0.3px !important; padding: 12px 24px !important; text-transform: uppercase !important; }
+[data-testid="stTabs"] button[aria-selected="true"] { color: #fafafa !important; border-bottom: 3px solid #3b82f6 !important; }
+[data-testid="stTabs"] button:hover { color: #c0c8d4 !important; }
+[data-testid="stTabs"], [data-testid="stTabs"] > div {
+    background-color: #0e1117 !important;
+}
+[data-testid="stTabs"] { margin-top: 10px !important; }
+
+/* ===== MODAL / DIALOG ===== */
+[data-testid="stModal"] { background-color: rgba(0,0,0,0.85) !important; }
+[data-testid="stModal"] > div, [data-testid="stModal"] > div > div,
+[role="dialog"], [role="dialog"] > div {
+    background-color: #161b22 !important; color: #fafafa !important; border-radius: 12px !important;
+}
+[data-testid="stModal"] p, [data-testid="stModal"] span, [data-testid="stModal"] label,
+[data-testid="stModal"] div, [data-testid="stModal"] li, [data-testid="stModal"] strong,
+[role="dialog"] p, [role="dialog"] span, [role="dialog"] label,
+[role="dialog"] div, [role="dialog"] li, [role="dialog"] strong {
+    color: #fafafa !important;
+}
+
+/* ===== BUTTONS ===== */
+button { background-color: #1c2030 !important; color: #fafafa !important; border-color: #3a3f52 !important; border-radius: 6px !important; font-weight: 500 !important; }
+button:hover { background-color: #2a3040 !important; border-color: #4a5068 !important; }
+[data-testid="baseButton-primary"] { background: linear-gradient(135deg, #da3633, #b62324) !important; color: #ffffff !important; border: none !important; }
+[data-testid="baseButton-primary"]:hover { background: linear-gradient(135deg, #f85149, #da3633) !important; }
+/* Blue primary for Update button inside edit dialog */
+[data-testid="stModal"] [data-testid="baseButton-primary"],
+[role="dialog"] [data-testid="baseButton-primary"] {
+    background: linear-gradient(135deg, #3b82f6, #2563eb) !important; color: #ffffff !important; border: none !important;
+}
+[data-testid="stModal"] [data-testid="baseButton-primary"]:hover,
+[role="dialog"] [data-testid="baseButton-primary"]:hover {
+    background: linear-gradient(135deg, #2563eb, #1d4ed8) !important;
+}
+/* Green save/submit button inside forms and save-btn wrapper */
+[data-testid="stForm"] [data-testid="baseButton-primary"],
+[data-testid="stForm"] [data-testid="stFormSubmitButton"] button,
+.save-btn-wrapper [data-testid="baseButton-primary"],
+.save-btn-wrapper button {
+    background: linear-gradient(135deg, #238636, #1a7f37) !important; color: #ffffff !important; border: none !important;
+    font-weight: 600 !important; font-size: 15px !important; padding: 10px 20px !important;
+}
+[data-testid="stForm"] [data-testid="baseButton-primary"]:hover,
+[data-testid="stForm"] [data-testid="stFormSubmitButton"] button:hover,
+.save-btn-wrapper [data-testid="baseButton-primary"]:hover,
+.save-btn-wrapper button:hover {
+    background: linear-gradient(135deg, #2ea043, #238636) !important;
+}
+/* Download buttons */
+[data-testid="stDownloadButton"] button { background-color: #1c2030 !important; color: #fafafa !important; }
+[data-testid="stDownloadButton"] button:hover { background-color: #2a3040 !important; }
+
+/* ===== EXPANDER ===== */
+[data-testid="stExpander"] { background-color: #161b22 !important; border: 1px solid #2a3040 !important; border-radius: 8px !important; margin-bottom: 8px !important; }
+[data-testid="stExpander"] summary { color: #fafafa !important; }
+[data-testid="stExpander"] summary:hover { color: #3b82f6 !important; }
+[data-testid="stExpander"] > div, [data-testid="stExpander"] details,
+[data-testid="stExpander"] details > div,
+[data-testid="stExpander"] [data-testid="stVerticalBlock"],
+[data-testid="stExpander"] [data-testid="stHorizontalBlock"] {
+    background-color: #161b22 !important; color: #fafafa !important;
+}
+[data-testid="stExpander"] p, [data-testid="stExpander"] span,
+[data-testid="stExpander"] label, [data-testid="stExpander"] strong,
+[data-testid="stExpander"] li, [data-testid="stExpander"] div {
+    color: #fafafa !important;
+}
+
+/* ===== DATAFRAME / TABLE ===== */
+[data-testid="stDataFrame"] { border-radius: 8px !important; overflow: hidden !important; }
+[data-testid="stDataFrame"] > div,
+[data-testid="stDataFrame"] [class*="glide"],
+[data-testid="stDataFrame"] [class*="dvn"],
+[data-testid="stDataFrame"] table {
+    background-color: #161b22 !important; color: #fafafa !important;
+}
+/* Glide Data Grid canvas theme — these CSS vars control the canvas-rendered cells */
+[data-testid="stDataFrame"] > div {
+    --gdg-bg-cell: #161b22 !important;
+    --gdg-bg-cell-medium: #161b22 !important;
+    --gdg-bg-header: #1c2030 !important;
+    --gdg-bg-header-has-focus: #1c2030 !important;
+    --gdg-bg-header-hovered: #2a3040 !important;
+    --gdg-text-dark: #fafafa !important;
+    --gdg-text-medium: #c0c8d4 !important;
+    --gdg-text-light: #8b95a5 !important;
+    --gdg-text-header: #8b95a5 !important;
+    --gdg-text-header-selected: #fafafa !important;
+    --gdg-text-group-header: #8b95a5 !important;
+    --gdg-text-bubble: #fafafa !important;
+    --gdg-bg-bubble: #2a3040 !important;
+    --gdg-bg-bubble-selected: #3b82f6 !important;
+    --gdg-border-color: #2a3040 !important;
+    --gdg-horizontal-border-color: #2a3040 !important;
+    --gdg-drilldown-border: #2a3040 !important;
+    --gdg-link-color: #3b82f6 !important;
+    --gdg-cell-horizontal-padding: 10px !important;
+    --gdg-cell-vertical-padding: 4px !important;
+    --gdg-bg-search-result: #1a3a5c !important;
+    --gdg-accent-color: #3b82f6 !important;
+    --gdg-accent-fg: #ffffff !important;
+    --gdg-accent-light: rgba(59,130,246,0.15) !important;
+    --gdg-bg-icon-header: #8b95a5 !important;
+    --gdg-fg-icon-header: #161b22 !important;
+}
+/* Glide Data Grid cells (Streamlit dataframe) */
+[data-testid="stDataFrame"] canvas + div,
+[data-testid="stDataFrame"] [class*="cell"],
+[data-testid="stDataFrame"] [role="grid"],
+[data-testid="stDataFrame"] [role="gridcell"],
+[data-testid="stDataFrame"] [role="columnheader"],
+[data-testid="stDataFrame"] [role="row"] {
+    background-color: #161b22 !important; color: #fafafa !important;
+}
+/* Dataframe toolbar / search */
+[data-testid="stDataFrame"] [data-testid="stElementToolbar"],
+[data-testid="stDataFrame"] [data-testid="stElementToolbar"] button {
+    background-color: #1c2030 !important; color: #fafafa !important;
+}
+
+/* ===== FORM CONTAINER ===== */
+[data-testid="stForm"] {
+    background-color: #0e1117 !important; border-color: #2a3040 !important;
+}
+[data-testid="stForm"] > div {
+    background-color: #0e1117 !important;
+}
+
+/* ===== ALERT / INFO / SUCCESS / ERROR BOXES ===== */
+[data-testid="stAlert"], [role="alert"] {
+    background-color: #161b22 !important; color: #fafafa !important;
+    border-color: #2a3040 !important;
+}
+[data-testid="stAlert"] p, [data-testid="stAlert"] span,
+[role="alert"] p, [role="alert"] span {
+    color: #fafafa !important;
+}
+
+/* ===== HORIZONTAL RULE ===== */
+hr, [data-testid="stMarkdown"] hr {
+    border-color: #2a3040 !important; background-color: #2a3040 !important;
+}
+
+/* ===== COLUMNS — transparent bg ===== */
+[data-testid="stColumn"], [data-testid="stColumn"] > div {
+    background-color: transparent !important;
+}
+
+/* ===== TOOLTIP ===== */
+[data-testid="stTooltipIcon"] svg { fill: #8b95a5 !important; }
+
+/* ===== CUSTOM CLASSES ===== */
+.header-container {
+    background: linear-gradient(135deg, #0f2744 0%, #1a3a5c 50%, #1e4976 100%);
+    border-radius: 12px; padding: 20px 24px; margin-bottom: 20px; text-align: center;
+    border: 1px solid #1e3a5f;
+}
+.header-title { font-size: 26px !important; font-weight: 700; color: white; margin: 0; letter-spacing: -0.3px; }
+
+.info-box {
+    background: #161b22; border: 1px solid #f39c12; border-left: 4px solid #f39c12;
+    border-radius: 8px; padding: 10px 18px; margin-bottom: 12px; font-size: 12px; color: #d0d7de;
+}
+.info-box h4 { color: #f39c12 !important; margin: 0 0 8px 0; font-size: 14px; font-weight: 600; }
+.info-box ul { margin: 0; padding-left: 18px; }
+.info-box li { margin-bottom: 1px; color: #d0d7de !important; }
+.info-box strong { color: #e6edf3 !important; }
+
+.success-box {
+    background: #0d2818; border: 1px solid #238636; border-left: 4px solid #238636;
+    border-radius: 8px; padding: 14px 18px; font-size: 13px; color: #7ee787;
+}
+
+.metric-card {
+    background: #161b22; border: 1px solid #2a3040; border-radius: 10px;
+    padding: 16px 20px; text-align: center; border-left: 3px solid #3b82f6;
+}
+.metric-value { font-size: 28px; font-weight: 700; color: #3b82f6 !important; margin: 0; }
+.metric-label { font-size: 11px; color: #8b95a5 !important; margin: 6px 0 0 0; text-transform: uppercase; letter-spacing: 0.8px; font-weight: 500; }
+/* Colored card variants */
+.mc-blue { border-left-color: #3b82f6; }
+.mc-blue .metric-value { color: #3b82f6 !important; }
+.mc-teal { border-left-color: #14b8a6; }
+.mc-teal .metric-value { color: #14b8a6 !important; }
+.mc-purple { border-left-color: #a78bfa; }
+.mc-purple .metric-value { color: #a78bfa !important; }
+.mc-amber { border-left-color: #f59e0b; }
+.mc-amber .metric-value { color: #f59e0b !important; }
+.mc-red { border-left-color: #ef4444; }
+.mc-red .metric-value { color: #ef4444 !important; }
+.mc-green { border-left-color: #22c55e; }
+.mc-green .metric-value { color: #22c55e !important; }
+.mc-orange { border-left-color: #f97316; }
+.mc-orange .metric-value { color: #f97316 !important; }
+
+.section-label {
+    font-size: 11px; font-weight: 600; color: #3b82f6 !important; text-transform: uppercase;
+    letter-spacing: 1px; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid #2a3040;
+}
+
+.detail-row { display: flex; padding: 4px 0; }
+.detail-key { color: #8b95a5 !important; font-size: 13px; min-width: 140px; }
+.detail-val { color: #e6edf3 !important; font-size: 13px; font-weight: 500; }
+
+.error-msg { color: #f85149 !important; font-size: 13px; margin-top: 4px; padding: 2px 0; }
+.error-msg strong { color: #f85149 !important; }
+
+[data-testid="stMarkdown"] span.field-error,
+span.field-error,
+.field-error { color: #ff3333 !important; font-size: 12px; font-weight: 500; margin-top: -10px; margin-bottom: 8px; display: block; }
+[data-testid="stMarkdown"] p .field-error,
+[data-testid="stMarkdown"] .field-error,
+.field-error * { color: #ff3333 !important; }
+
+.help-btn a {
+    display: inline-block; width: 100%; padding: 10px 20px; text-align: center;
+    background: linear-gradient(135deg, #238636, #1a7f37) !important; color: #ffffff !important;
+    border-radius: 6px; font-weight: 600; font-size: 14px; text-decoration: none;
+    border: none; cursor: pointer; box-sizing: border-box;
+}
+.help-btn a:hover { background: linear-gradient(135deg, #2ea043, #238636) !important; text-decoration: none; color: #ffffff !important; }
+
+.main .block-container { padding-top: 1rem; padding-bottom: 1rem; max-width: 100%; }
+
+.filter-container { background: #161b22; border: 1px solid #2a3040; border-radius: 8px; padding: 12px 16px; margin-bottom: 12px; }
+
+.page-info { color: #8b95a5 !important; font-size: 13px; text-align: center; padding: 8px 0; }
+
+.history-table {
+    width: 100%; border-collapse: collapse; font-size: 13px; color: #e6edf3;
+}
+.history-table th {
+    background: #1c2030 !important; color: #8b95a5 !important; font-weight: 600; text-transform: uppercase;
+    font-size: 11px; letter-spacing: 0.5px; padding: 10px 14px; border-bottom: 1px solid #2a3040;
+    text-align: left; position: sticky; top: 0; z-index: 1;
+}
+.history-table td {
+    padding: 8px 14px; border-bottom: 1px solid #1c2030; color: #e6edf3 !important;
+    white-space: nowrap;
+}
+.history-table tr { background-color: #161b22 !important; }
+.history-table tr:hover { background: #1c2030 !important; }
+
+.dashboard-table {
+    width: 100%; border-collapse: collapse; font-size: 13px; color: #e6edf3;
+    table-layout: fixed;
+}
+.dashboard-table th:first-child { width: 70%; }
+.dashboard-table th:last-child { width: 30%; }
+.dashboard-table th {
+    background: #1c2030 !important; color: #8b95a5 !important; font-weight: 600; text-transform: uppercase;
+    font-size: 11px; letter-spacing: 0.5px; padding: 10px 14px; border-bottom: 1px solid #2a3040;
+    text-align: left;
+}
+.dashboard-table th:last-child { text-align: center; }
+.dashboard-table td { padding: 8px 14px; border-bottom: 1px solid #1c2030; color: #e6edf3 !important; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dashboard-table td:last-child { text-align: center; font-weight: 600; color: #3b82f6 !important; }
+.dashboard-table tr:hover { background: #1c2030 !important; }
+.dashboard-table tr { background-color: #161b22 !important; }
+</style>
+""", unsafe_allow_html=True)
+
+
+HELP_URL = "https://colesgroup.atlassian.net/wiki/spaces/DIOT/pages/5385979116/Insights+Core+Ingestion-+Support+handover+Streamlit+App"
+
+defaults = {
+    "delete_confirm_step": 0, "delete_target": None, "delete_target_pk": None,
+    "edit_mode": False, "edit_index": None,
+    "success_message": None, "success_tab": None,
+    "current_page": 0,
+}
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
+
+session = Session.builder.getOrCreate()
+user_info = st.user
+user_email = (user_info.get("email") if user_info else None) or "unknown@company.com"
+
+ADMIN_ROLE = "PRD_CORE_OPS_ENG"
+try:
+    current_role = session.sql("SELECT CURRENT_ROLE()").to_pandas().iloc[0, 0]
+except Exception:
+    current_role = ""
+is_admin = (str(current_role).upper() == ADMIN_ROLE)
+
+TABLE = "DB_CORE_PRD.PMD.INSIGHTS_CORE_INGESTION"
+
+SOURCE_PATTERN_OPTIONS = ["-- Select --", "DB", "Flat File", "API", "Snowflake Share","JSON", "CSV", "XML", "PARQUET", "TAR.GZ", "GZ", "GPG", "PGP"]
+MECHANISM_OPTIONS = ["-- Select --", "Push", "Pull"]
+PRIORITY_OPTIONS = ["-- Select --", "P1", "P2", "P3"]
+LOAD_BRONZE_OPTIONS = ["-- Select --", "Y", "N"]
+ENCRYPTED_OPTIONS = ["-- Select --", "YES", "NO"]
+PLACEHOLDER = "-- Select --"
+
+RECORDS_PER_PAGE = 20
+
+FIELD_COLUMNS = [
+    "SOURCE_SYSTEM", "PROJECT", "INTERFACE_NAME", "SOURCE_PATTERN", "MECHANISM",
+    "TIME_OF_LANDING", "DATABASE_NAME", "STAGE_TABLE_NAME", "PSG_TABLE_NAME",
+    "PRIORITY", "LOAD_TO_DATA_BRONZE_PRODUCTS", "SOURCE_CONTACT",
+    "SOURCE_SERVICE_NOW_GROUP", "ENGINEER_EMAIL_ID", "HLD", "IFM", "COMMENTS",
+    "ENCRYPTED", "EXPIRATION_DATE"
+]
+
+
+def clean_input(text):
+    if not text:
+        return ""
+    text = text.strip()
+    text = re.sub(r' +', ' ', text)
+    return text
+
+
+FIELD_LABELS = {
+    "SOURCE_SYSTEM": "Source System",
+    "PROJECT": "Project",
+    "INTERFACE_NAME": "Interface Name",
+    "SOURCE_PATTERN": "Source Pattern",
+    "MECHANISM": "Mechanism",
+    "TIME_OF_LANDING": "Time of Landing",
+    "DATABASE_NAME": "Database Name",
+    "STAGE_TABLE_NAME": "Stage Table Name",
+    "PSG_TABLE_NAME": "PSG Table Name",
+    "PRIORITY": "Priority",
+    "LOAD_TO_DATA_BRONZE_PRODUCTS": "Load to Data Bronze Products",
+    "SOURCE_CONTACT": "Source Contact",
+    "SOURCE_SERVICE_NOW_GROUP": "Source Service Now Group",
+    "ENGINEER_EMAIL_ID": "Engineer Email ID",
+    "HLD": "HLD (Confluence URL)",
+    "IFM": "IFM (Confluence URL)",
+    "COMMENTS": "Comments",
+    "ENCRYPTED": "Encrypted",
+    "EXPIRATION_DATE": "Expiration Date",
+}
+
+DROPDOWN_FIELDS = {"SOURCE_PATTERN", "MECHANISM", "PRIORITY", "LOAD_TO_DATA_BRONZE_PRODUCTS", "ENCRYPTED"}
+CONFLUENCE_PREFIX = "https://colesgroup.atlassian.net/"
+DB_NAME_PREFIX = "DB_CORE_"
+
+FORM_FIELD_DEFAULTS = {
+    "new_source_system": "", "new_project": "", "new_interface_name": "",
+    "new_source_pattern": "-- Select --", "new_mechanism": "-- Select --",
+    "new_time_of_landing": "", "new_priority": "-- Select --",
+    "new_load_bronze": "-- Select --", "new_database_name": "",
+    "new_stage_table_name": "", "new_psg_table_name": "",
+    "new_source_contact": "", "new_source_snow_group": "",
+    "new_hld": "", "new_ifm": "", "new_comments": "",
+    "new_encrypted": "-- Select --", "new_expiration_date": None,
+}
+
+OPTIONAL_FIELDS = {"COMMENTS"}
+
+def validate_form(data):
+    errors = {"missing": [], "dropdown": [], "spaces": [], "trailing": [], "confluence": [], "db_prefix": []}
+    for field, value in data.items():
+        label = FIELD_LABELS.get(field, field)
+        if field == "EXPIRATION_DATE":
+            continue
+        if value is None:
+            if field in OPTIONAL_FIELDS:
+                pass
+            elif field in DROPDOWN_FIELDS:
+                errors["dropdown"].append(label)
+            else:
+                errors["missing"].append(label)
+        elif isinstance(value, str):
+            val = value.strip()
+            if not val or val == PLACEHOLDER:
+                if field in OPTIONAL_FIELDS:
+                    pass
+                elif field in DROPDOWN_FIELDS:
+                    errors["dropdown"].append(label)
+                else:
+                    errors["missing"].append(label)
+            else:
+                if "  " in value:
+                    errors["spaces"].append(label)
+                if value.startswith(" ") or value.endswith(" "):
+                    errors["trailing"].append(label)
+                if field in ("HLD", "IFM") and not val.startswith(CONFLUENCE_PREFIX):
+                    errors["confluence"].append(label)
+                if field == "DATABASE_NAME" and not val.upper().startswith(DB_NAME_PREFIX):
+                    errors["db_prefix"].append(label)
+    if data.get("ENCRYPTED") == "YES" and not data.get("EXPIRATION_DATE"):
+        errors["missing"].append(FIELD_LABELS["EXPIRATION_DATE"])
+    result = []
+    if errors["missing"]:
+        result.append(("Mandatory fields left empty", errors["missing"]))
+    if errors["dropdown"]:
+        result.append(("Please select a value for", errors["dropdown"]))
+    if errors["confluence"]:
+        result.append((f"URL must begin with {CONFLUENCE_PREFIX} for", errors["confluence"]))
+    if errors["db_prefix"]:
+        result.append((f"Value must begin with {DB_NAME_PREFIX} for", errors["db_prefix"]))
+    if errors["spaces"]:
+        result.append(("Multiple consecutive spaces found in", errors["spaces"]))
+    if errors["trailing"]:
+        result.append(("Leading or trailing spaces found in", errors["trailing"]))
+    return result
+
+
+UPPERCASE_FIELDS = {"SOURCE_SYSTEM", "INTERFACE_NAME", "DATABASE_NAME", "PSG_TABLE_NAME", "STAGE_TABLE_NAME"}
+
+def clean_all_fields(data):
+    cleaned = {}
+    for key, value in data.items():
+        if value is None:
+            cleaned[key] = ""
+        elif isinstance(value, str):
+            v = clean_input(value)
+            v = "" if v == PLACEHOLDER else v
+            if key in UPPERCASE_FIELDS and v:
+                v = v.upper()
+            cleaned[key] = v
+        else:
+            cleaned[key] = str(value)
+    return cleaned
+
+
+def inline_field_error(value, field_name, encrypted_value=None):
+    """Return an error message for a single field, or None if valid.
+    Only shows errors when the field has been touched (non-empty / changed from default)."""
+    if field_name == "EXPIRATION_DATE":
+        if encrypted_value == "YES" and not value:
+            return "Required when Encrypted is YES"
+        return None
+
+    if field_name in DROPDOWN_FIELDS:
+        if value is not None and isinstance(value, str) and value != PLACEHOLDER:
+            return None  # valid selection
+        if value == PLACEHOLDER:
+            return None  # not touched yet, don't nag
+        return None
+
+    if value is None or not isinstance(value, str):
+        return None
+    val = value.strip()
+    if not val:
+        return None  # empty = not touched yet, Save button will catch it
+    if "  " in value:
+        return "Multiple consecutive spaces not allowed"
+    if value.startswith(" ") or value.endswith(" "):
+        return "Leading or trailing spaces not allowed"
+    if field_name in ("HLD", "IFM") and not val.startswith(CONFLUENCE_PREFIX):
+        return f"Must begin with {CONFLUENCE_PREFIX}"
+    if field_name == "DATABASE_NAME" and not val.upper().startswith(DB_NAME_PREFIX):
+        return f"Must begin with {DB_NAME_PREFIX}"
+    return None
+
+
+def show_inline_error(value, field_name, encrypted_value=None):
+    """Display an inline error below a field if validation fails."""
+    err = inline_field_error(value, field_name, encrypted_value)
+    if err:
+        st.markdown(f'<span class="field-error">⚠ {err}</span>', unsafe_allow_html=True)
+
+
+def get_total_count(search_term="", filter_source="All", filter_priority="All", filter_db="All"):
+    where = "AUDIT_CURRENT = TRUE"
+    if search_term:
+        safe_search = search_term.replace("'", "''")
+        search_conditions = " OR ".join([f"TO_VARCHAR({col}) ILIKE '%{safe_search}%'" for col in FIELD_COLUMNS])
+        where += f" AND ({search_conditions})"
+    if filter_source != "All":
+        where += f" AND SOURCE_SYSTEM = '{filter_source.replace(chr(39), chr(39)+chr(39))}'"
+    if filter_priority != "All":
+        where += f" AND PRIORITY = '{filter_priority.replace(chr(39), chr(39)+chr(39))}'"
+    if filter_db != "All":
+        where += f" AND DATABASE_NAME = '{filter_db.replace(chr(39), chr(39)+chr(39))}'"
+    return int(session.sql(f"SELECT COUNT(*) as cnt FROM {TABLE} WHERE {where}").to_pandas()['CNT'].iloc[0])
+
+
+def load_entries_page(offset=0, limit=RECORDS_PER_PAGE, search_term="", filter_source="All", filter_priority="All", filter_db="All"):
+    where = "AUDIT_CURRENT = TRUE"
+    if search_term:
+        safe_search = search_term.replace("'", "''")
+        search_conditions = " OR ".join([f"TO_VARCHAR({col}) ILIKE '%{safe_search}%'" for col in FIELD_COLUMNS])
+        where += f" AND ({search_conditions})"
+    if filter_source != "All":
+        where += f" AND SOURCE_SYSTEM = '{filter_source.replace(chr(39), chr(39)+chr(39))}'"
+    if filter_priority != "All":
+        where += f" AND PRIORITY = '{filter_priority.replace(chr(39), chr(39)+chr(39))}'"
+    if filter_db != "All":
+        where += f" AND DATABASE_NAME = '{filter_db.replace(chr(39), chr(39)+chr(39))}'"
+    df = session.sql(f"""
+        SELECT {', '.join(FIELD_COLUMNS)}
+        FROM {TABLE}
+        WHERE {where}
+        ORDER BY SOURCE_SYSTEM, INTERFACE_NAME
+        LIMIT {limit} OFFSET {offset}
+    """).to_pandas()
+    return df.to_dict('records')
+
+
+def load_all_entries():
+    df = session.sql(f"""
+        SELECT {', '.join(FIELD_COLUMNS)}
+        FROM {TABLE}
+        WHERE AUDIT_CURRENT = TRUE
+        ORDER BY SOURCE_SYSTEM, INTERFACE_NAME
+    """).to_pandas()
+    return df
+
+
+def check_duplicate_in_db(source_system, interface_name, database_name, psg_table_name):
+    safe = {
+        "ss": source_system.replace("'", "''"),
+        "in": interface_name.replace("'", "''"),
+        "dn": database_name.replace("'", "''"),
+        "pt": psg_table_name.replace("'", "''"),
+    }
+    result = session.sql(f"""
+        SELECT COUNT(*) as cnt FROM {TABLE}
+        WHERE AUDIT_CURRENT = TRUE
+          AND SOURCE_SYSTEM = '{safe["ss"]}'
+          AND INTERFACE_NAME = '{safe["in"]}'
+          AND DATABASE_NAME = '{safe["dn"]}'
+          AND PSG_TABLE_NAME = '{safe["pt"]}'
+    """).to_pandas()
+    return result['CNT'].iloc[0] > 0
+
+
+def insert_entry(data):
+    import datetime
+    exp_val = data.get("EXPIRATION_DATE")
+    if exp_val and not isinstance(exp_val, (datetime.date, datetime.datetime)):
+        try:
+            exp_val = pd.to_datetime(str(exp_val)).date()
+        except Exception:
+            raise ValueError("EXPIRATION_DATE must be a valid date")
+        data["EXPIRATION_DATE"] = exp_val
+    safe = {k: str(v).replace("'", "''") if v else "" for k, v in data.items()}
+    cols = ", ".join(FIELD_COLUMNS)
+    vals = []
+    for column in FIELD_COLUMNS:
+        value = safe.get(column, "")
+        if column == "EXPIRATION_DATE" and not value:
+            vals.append("NULL")
+        else:
+            vals.append("'" + value + "'")
+    vals_sql = ", ".join(vals)
+    hashkey_src = safe["SOURCE_SYSTEM"] + safe["INTERFACE_NAME"] + safe["DATABASE_NAME"] + safe["PSG_TABLE_NAME"]
+    hashdiff_src = "".join(safe.get(c, "") for c in FIELD_COLUMNS)
+    sql = f"""
+        INSERT INTO {TABLE}
+        ({cols}, AUDIT_FILE_PROCESSED_DATE, AUDIT_FILE_NAME, AUDIT_JOB_GUID,
+         AUDIT_CURRENT, AUDIT_START_DATE, AUDIT_HASHKEY, AUDIT_HASHDIFF)
+        SELECT {vals_sql}, CURRENT_TIMESTAMP(), 'STREAMLIT_APP', UUID_STRING(),
+               TRUE, CURRENT_DATE(), MD5('{hashkey_src}'), MD5('{hashdiff_src}')
+    """
+    session.sql(sql).collect()
+
+
+
+
+def update_entry(old_pk, data, modified_by=""):
+    safe_old = {k: str(v).replace("'", "''") for k, v in old_pk.items()}
+    safe_email = modified_by.replace("'", "''") if modified_by else "unknown"
+    transaction_started = False
+    try:
+        session.sql("BEGIN").collect()
+        transaction_started = True
+        check_cnt = session.sql(f"""
+            SELECT COUNT(*) as cnt FROM {TABLE}
+            WHERE SOURCE_SYSTEM = '{safe_old["SOURCE_SYSTEM"]}'
+              AND INTERFACE_NAME = '{safe_old["INTERFACE_NAME"]}'
+              AND DATABASE_NAME = '{safe_old["DATABASE_NAME"]}'
+              AND PSG_TABLE_NAME = '{safe_old["PSG_TABLE_NAME"]}'
+              AND AUDIT_CURRENT = TRUE
+        """).to_pandas()['CNT'].iloc[0]
+        if check_cnt == 0:
+            raise RuntimeError("This entry was already modified or deleted by another user. Please refresh and try again.")
+        session.sql(f"""
+            UPDATE {TABLE}
+            SET AUDIT_CURRENT = FALSE, AUDIT_END_DATE = CURRENT_DATE(),
+                AUDIT_FILE_NAME = 'UPDATED_BY:{safe_email}',
+                AUDIT_FILE_PROCESSED_DATE = CURRENT_TIMESTAMP()
+            WHERE SOURCE_SYSTEM = '{safe_old["SOURCE_SYSTEM"]}'
+              AND INTERFACE_NAME = '{safe_old["INTERFACE_NAME"]}'
+              AND DATABASE_NAME = '{safe_old["DATABASE_NAME"]}'
+              AND PSG_TABLE_NAME = '{safe_old["PSG_TABLE_NAME"]}'
+              AND AUDIT_CURRENT = TRUE
+        """).collect()
+        insert_entry(data)
+        session.sql("COMMIT").collect()
+        transaction_started = False
+    except Exception:
+        if transaction_started:
+            try:
+                session.sql("ROLLBACK").collect()
+            except Exception:
+                pass
+        raise
+
+
+def delete_entry(pk, deleted_by=""):
+    safe_pk = {k: str(v).replace("'", "''") for k, v in pk.items()}
+    safe_email = deleted_by.replace("'", "''") if deleted_by else "unknown"
+    session.sql(f"""
+        UPDATE {TABLE}
+        SET AUDIT_CURRENT = FALSE, AUDIT_END_DATE = CURRENT_DATE(),
+            AUDIT_FILE_NAME = 'DELETED_BY:{safe_email}',
+            AUDIT_FILE_PROCESSED_DATE = CURRENT_TIMESTAMP()
+        WHERE SOURCE_SYSTEM = '{safe_pk["SOURCE_SYSTEM"]}'
+          AND INTERFACE_NAME = '{safe_pk["INTERFACE_NAME"]}'
+          AND DATABASE_NAME = '{safe_pk["DATABASE_NAME"]}'
+          AND PSG_TABLE_NAME = '{safe_pk["PSG_TABLE_NAME"]}'
+          AND AUDIT_CURRENT = TRUE
+    """).collect()
+
+
+def get_distinct_values(column):
+    df = session.sql(f"""
+        SELECT DISTINCT {column} FROM {TABLE}
+        WHERE AUDIT_CURRENT = TRUE AND {column} IS NOT NULL AND {column} != ''
+        ORDER BY {column}
+    """).to_pandas()
+    return ["All"] + df[column].tolist()
+
+
+def is_missing_value(value):
+    """Return True for scalar missing values from Python, Snowflake, or Pandas."""
+    try:
+        return value is None or pd.isna(value)
+    except (TypeError, ValueError):
+        return value is None
+
+
+def safe_str(value, default=""):
+    """Safely convert a value to string, handling missing values from Snowflake/Pandas."""
+    if is_missing_value(value):
+        return default
+    return str(value)
+
+
+def html_escape(value, default=""):
+    """Escape values before injecting them into custom HTML tables."""
+    return html.escape(safe_str(value, default))
+
+
+def auto_captured_engineer_email(stored_email, current_user_email):
+    """Use the stored engineer email when available, otherwise fall back to the current user."""
+    stored = safe_str(stored_email).strip()
+    current = safe_str(current_user_email, "unknown@company.com").strip()
+    return stored or current or "unknown@company.com"
+
+
+def safe_date_value(value):
+    """Return a date object for Streamlit date_input, or None when unavailable."""
+    if is_missing_value(value):
+        return None
+    if hasattr(value, "date"):
+        try:
+            return value.date()
+        except Exception:
+            pass
+    if hasattr(value, "year") and hasattr(value, "month") and hasattr(value, "day") and not isinstance(value, str):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return pd.to_datetime(text).date()
+    except Exception:
+        return None
+
+
+def dropdown_value(value):
+    """Return a valid dropdown state value, preserving non-empty legacy values."""
+    text = safe_str(value).strip()
+    return text if text else PLACEHOLDER
+
+
+def options_with_existing(options, current_value):
+    """Keep legacy dropdown values selectable when editing existing records."""
+    selected = dropdown_value(current_value)
+    if selected != PLACEHOLDER and selected not in options:
+        return [options[0], selected] + list(options[1:])
+    return options
+
+
+def edit_widget_defaults(entry, current_user_email):
+    """Build edit widget defaults for a newly selected record."""
+    return {
+        "edit_source_system": safe_str(entry.get("SOURCE_SYSTEM")),
+        "edit_interface_name": safe_str(entry.get("INTERFACE_NAME")),
+        "edit_database_name": safe_str(entry.get("DATABASE_NAME")),
+        "edit_psg_table_name": safe_str(entry.get("PSG_TABLE_NAME")),
+        "edit_project": safe_str(entry.get("PROJECT")),
+        "edit_source_pattern": dropdown_value(entry.get("SOURCE_PATTERN")),
+        "edit_mechanism": dropdown_value(entry.get("MECHANISM")),
+        "edit_time_of_landing": safe_str(entry.get("TIME_OF_LANDING")),
+        "edit_stage_table_name": safe_str(entry.get("STAGE_TABLE_NAME")),
+        "edit_priority": dropdown_value(entry.get("PRIORITY")),
+        "edit_load_bronze": dropdown_value(entry.get("LOAD_TO_DATA_BRONZE_PRODUCTS")),
+        "edit_encrypted": dropdown_value(entry.get("ENCRYPTED")),
+        "edit_expiration_date": safe_date_value(entry.get("EXPIRATION_DATE")),
+        "edit_source_contact": safe_str(entry.get("SOURCE_CONTACT")),
+        "edit_source_snow_group": safe_str(entry.get("SOURCE_SERVICE_NOW_GROUP")),
+        "edit_engineer_email": auto_captured_engineer_email(entry.get("ENGINEER_EMAIL_ID"), current_user_email),
+        "edit_hld": safe_str(entry.get("HLD")),
+        "edit_ifm": safe_str(entry.get("IFM")),
+        "edit_comments": safe_str(entry.get("COMMENTS")),
+    }
+
+
+def render_html_table(df):
+    if df.empty:
+        return '<p style="color:#8b95a5;font-size:13px;">No data available.</p>'
+    headers = "".join(f"<th>{html_escape(col)}</th>" for col in df.columns)
+    rows = ""
+    for _, row in df.iterrows():
+        cells = "".join(f"<td>{html_escape(row[col])}</td>" for col in df.columns)
+        rows += f"<tr>{cells}</tr>"
+    return f"""
+    <div style="overflow-x:auto;">
+    <table class="history-table">
+        <thead><tr>{headers}</tr></thead>
+        <tbody>{rows}</tbody>
+    </table>
+    </div>
+    """
+
+
+def render_dashboard_table(df, name_col, count_col="Count"):
+    rows_html = ""
+    for _, row in df.iterrows():
+        count_value = "" if is_missing_value(row[count_col]) else str(int(row[count_col]))
+        rows_html += f"<tr><td>{html_escape(row[name_col])}</td><td>{html_escape(count_value)}</td></tr>"
+    return f"""
+    <table class="dashboard-table">
+        <thead><tr><th>{html_escape(name_col)}</th><th>{html_escape(count_col)}</th></tr></thead>
+        <tbody>{rows_html}</tbody>
+    </table>
+    """
+
+
+st.markdown(f"""
+<div class="header-container">
+    <h1 class="header-title">Project Handover Form</h1>
+</div>
+""", unsafe_allow_html=True)
+
+if is_admin:
+    tab1, tab2, tab3, tab4 = st.tabs(["New Entry", "Existing Entries", "Change History", "Dashboard"])
+else:
+    tab1, tab2 = st.tabs(["New Entry", "Existing Entries"])
+    tab3 = None
+    tab4 = None
+
+with tab1:
+    _, help_col, reset_col = st.columns([8, 1, 1])
+    with help_col:
+        if HELP_URL and HELP_URL != "https://your-help-page-url-here.com":
+            st.markdown(f'<div class="help-btn"><a href="{HELP_URL}" target="_blank">How to Use This Dashboard</a></div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div class="help-btn"><a href="#" onclick="return false;" style="opacity:0.5;cursor:not-allowed;">Click for Help</a></div>', unsafe_allow_html=True)
+    with reset_col:
+        if st.button("Reset Form", key="reset_form", type="primary", use_container_width=True):
+            for fkey, default_val in FORM_FIELD_DEFAULTS.items():
+                st.session_state[fkey] = default_val
+            st.rerun()
+
+    st.markdown("""
+    <div class="info-box">
+        <div style="display:flex;gap:40px;">
+            <ul style="flex:1;margin:0;padding-left:18px;">
+                <li><strong>All fields except Comments are mandatory</strong></li>
+                <li><strong>No multiple spaces</strong> — only 1 space between words</li>
+                <li><strong>No trailing/leading spaces</strong></li>
+            </ul>
+            <ul style="flex:1;margin:0;padding-left:18px;">
+                <li><strong>Multiple values</strong> — separate with comma (e.g., value1, value2)</li>
+                <li><strong>Source Contact</strong> — accepts email addresses (@ allowed)</li>
+                <li><strong>HLD / IFM</strong> — must begin with https://colesgroup.atlassian.net/</li>
+                <li><strong>Database Name</strong> — must begin with DB_CORE_</li>
+            </ul>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if st.session_state.success_message and st.session_state.success_tab == "tab1":
+        st.toast(st.session_state.success_message)
+        st.session_state.success_message = None
+        st.session_state.success_tab = None
+
+    def _on_encrypted_change():
+        if st.session_state.new_encrypted != "YES":
+            st.session_state.new_expiration_date = None
+
+    st.markdown('<div class="section-label">Source & Interface</div>', unsafe_allow_html=True)
+    col1, col2 = st.columns(2)
+    with col1:
+        source_system = st.text_input("Source System *", key="new_source_system", max_chars=500)
+        show_inline_error(source_system, "SOURCE_SYSTEM")
+    with col2:
+        project = st.text_input("Project *", key="new_project", max_chars=500)
+        show_inline_error(project, "PROJECT")
+    col1b, col2b = st.columns(2)
+    with col1b:
+        interface_name = st.text_input("Interface Name *", key="new_interface_name", max_chars=500)
+        show_inline_error(interface_name, "INTERFACE_NAME")
+    with col2b:
+        time_of_landing = st.text_input("Time of Landing *", key="new_time_of_landing", max_chars=500, placeholder="e.g. Daily, Weekly, Hourly, 6:00 AM AEST")
+        show_inline_error(time_of_landing, "TIME_OF_LANDING")
+    col1c, col2c = st.columns(2)
+    with col1c:
+        source_pattern = st.selectbox("Source Pattern *", SOURCE_PATTERN_OPTIONS, key="new_source_pattern")
+    with col2c:
+        priority = st.selectbox("Priority *", PRIORITY_OPTIONS, key="new_priority")
+    col1d, col2d = st.columns(2)
+    with col1d:
+        mechanism = st.selectbox("Mechanism *", MECHANISM_OPTIONS, key="new_mechanism")
+    with col2d:
+        load_bronze = st.selectbox("Load to Data Bronze Products *", LOAD_BRONZE_OPTIONS, key="new_load_bronze")
+
+    st.markdown('<div class="section-label">Table Details</div>', unsafe_allow_html=True)
+    col3, col4 = st.columns(2)
+    with col3:
+        database_name = st.text_input("Database Name *", key="new_database_name", max_chars=500)
+        show_inline_error(database_name, "DATABASE_NAME")
+    with col4:
+        psg_table_name = st.text_input("PSG Table Name *", key="new_psg_table_name", max_chars=500)
+        show_inline_error(psg_table_name, "PSG_TABLE_NAME")
+    col3b, col4b = st.columns(2)
+    with col3b:
+        stage_table_name = st.text_input("Stage Table Name *", key="new_stage_table_name", max_chars=500)
+        show_inline_error(stage_table_name, "STAGE_TABLE_NAME")
+
+    st.markdown('<div class="section-label">Contact Information</div>', unsafe_allow_html=True)
+    col5, col6 = st.columns(2)
+    with col5:
+        source_contact = st.text_input("Source Contact *", key="new_source_contact", max_chars=500)
+        show_inline_error(source_contact, "SOURCE_CONTACT")
+    with col6:
+        source_snow_group = st.text_input("Source Service Now Group *", key="new_source_snow_group", max_chars=500)
+        show_inline_error(source_snow_group, "SOURCE_SERVICE_NOW_GROUP")
+    col5b, col6b = st.columns(2)
+    with col5b:
+        engineer_email = st.text_input("Engineer Email ID *", value=user_email, key="new_engineer_email", disabled=True)
+
+    st.markdown('<div class="section-label">Documentation</div>', unsafe_allow_html=True)
+    col7, col8 = st.columns(2)
+    with col7:
+        hld = st.text_input("HLD (Confluence URL) *", key="new_hld", max_chars=500)
+        show_inline_error(hld, "HLD")
+    with col8:
+        ifm = st.text_input("IFM (Confluence URL) *", key="new_ifm", max_chars=500)
+        show_inline_error(ifm, "IFM")
+
+    st.markdown('<div class="section-label">Security</div>', unsafe_allow_html=True)
+    sec1, sec2 = st.columns(2)
+    with sec1:
+        encrypted = st.selectbox("Encrypted *", ENCRYPTED_OPTIONS, key="new_encrypted", on_change=_on_encrypted_change)
+    with sec2:
+        if encrypted == "YES":
+            expiration_date = st.date_input(
+                "Expiration Date *",
+                value=st.session_state.get("new_expiration_date"),
+                key="new_expiration_date",
+            )
+            show_inline_error(expiration_date, "EXPIRATION_DATE", encrypted_value=encrypted)
+        else:
+            st.markdown(
+                '<label style="font-size:14px;color:#fafafa;margin-bottom:4px;display:block;">Expiration Date</label>'
+                '<div style="background:#12151c;border:1px solid #2a3040;border-radius:6px;padding:10px 14px;'
+                'color:#4a5068;font-size:14px;">Select Encrypted = YES to enable</div>',
+                unsafe_allow_html=True,
+            )
+            expiration_date = None
+
+    comments = st.text_area("Comments", key="new_comments", height=100, max_chars=2000)
+    show_inline_error(comments, "COMMENTS")
+
+    st.markdown('<div class="save-btn-wrapper">', unsafe_allow_html=True)
+    submitted = st.button("Save Entry", type="primary", use_container_width=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    if submitted:
+        form_data = {
+            "SOURCE_SYSTEM": source_system, "PROJECT": project, "INTERFACE_NAME": interface_name,
+            "SOURCE_PATTERN": source_pattern, "MECHANISM": mechanism, "TIME_OF_LANDING": time_of_landing,
+            "DATABASE_NAME": database_name, "STAGE_TABLE_NAME": stage_table_name, "PSG_TABLE_NAME": psg_table_name,
+            "PRIORITY": priority, "LOAD_TO_DATA_BRONZE_PRODUCTS": load_bronze, "SOURCE_CONTACT": source_contact,
+            "SOURCE_SERVICE_NOW_GROUP": source_snow_group, "ENGINEER_EMAIL_ID": user_email,
+            "HLD": hld, "IFM": ifm, "COMMENTS": comments,
+            "ENCRYPTED": encrypted, "EXPIRATION_DATE": expiration_date
+        }
+        errors = validate_form(form_data)
+        if errors:
+            st.error("Please fix the following errors before saving:")
+            for category, fields in errors:
+                st.markdown(f'<div class="error-msg"><strong>{category}:</strong> {", ".join(fields)}</div>', unsafe_allow_html=True)
+        else:
+            form_data = clean_all_fields(form_data)
+            if check_duplicate_in_db(form_data["SOURCE_SYSTEM"], form_data["INTERFACE_NAME"],
+                                      form_data["DATABASE_NAME"], form_data["PSG_TABLE_NAME"]):
+                st.error("An entry with this primary key combination already exists.")
+            else:
+                try:
+                    insert_entry(form_data)
+                    st.session_state.success_message = "Entry saved successfully."
+                    st.session_state.success_tab = "tab1"
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Failed to save entry: {str(e)}")
+
+with tab2:
+    if st.session_state.success_message and st.session_state.success_tab == "tab2":
+        st.toast(st.session_state.success_message)
+        st.session_state.success_message = None
+        st.session_state.success_tab = None
+
+    st.markdown('<div class="section-label">Search & Filter</div>', unsafe_allow_html=True)
+    fc1, fc2, fc3, fc4 = st.columns(4)
+    with fc1:
+        search_term = st.text_input("Search", placeholder="Free text search...", key="tab2_search")
+    with fc2:
+        source_systems = get_distinct_values("SOURCE_SYSTEM")
+        filter_source = st.selectbox("Source System", source_systems, key="filter_source")
+    with fc3:
+        priorities = get_distinct_values("PRIORITY")
+        filter_priority = st.selectbox("Priority", priorities, key="filter_priority")
+    with fc4:
+        databases = get_distinct_values("DATABASE_NAME")
+        filter_db = st.selectbox("Database Name", databases, key="filter_db")
+
+    current_filters = (search_term, filter_source, filter_priority, filter_db)
+    if current_filters != st.session_state.get("_prev_filters", ("", "All", "All", "All")):
+        st.session_state.current_page = 0
+        st.session_state.delete_confirm_step = 0
+        st.session_state.delete_target = None
+        st.session_state.delete_target_pk = None
+    st.session_state._prev_filters = current_filters
+
+    total_count = get_total_count(search_term, filter_source, filter_priority, filter_db)
+    total_pages = int(max(1, (total_count + RECORDS_PER_PAGE - 1) // RECORDS_PER_PAGE))
+
+    if st.session_state.current_page >= total_pages:
+        st.session_state.current_page = total_pages - 1
+
+    page_offset = st.session_state.current_page * RECORDS_PER_PAGE
+    entries = load_entries_page(
+        offset=page_offset, limit=RECORDS_PER_PAGE,
+        search_term=search_term, filter_source=filter_source,
+        filter_priority=filter_priority, filter_db=filter_db
+    )
+
+    @st.cache_data(ttl=300)
+    def _get_tab2_metrics(_session_obj):
+        src = _session_obj.sql(f"SELECT COUNT(DISTINCT SOURCE_SYSTEM) as c FROM {TABLE} WHERE AUDIT_CURRENT = TRUE").to_pandas()['C'].iloc[0]
+        db = _session_obj.sql(f"SELECT COUNT(DISTINCT DATABASE_NAME) as c FROM {TABLE} WHERE AUDIT_CURRENT = TRUE").to_pandas()['C'].iloc[0]
+        proj = _session_obj.sql(f"SELECT COUNT(DISTINCT PROJECT) as c FROM {TABLE} WHERE AUDIT_CURRENT = TRUE AND PROJECT IS NOT NULL AND PROJECT != ''").to_pandas()['C'].iloc[0]
+        return int(src), int(db), int(proj)
+
+    src_count, db_count, proj_count = _get_tab2_metrics(session)
+
+    m1, m2, m3, m4 = st.columns(4)
+    with m1:
+        st.markdown(f'<div class="metric-card mc-blue"><p class="metric-value">{total_count}</p><p class="metric-label">Total Records</p></div>', unsafe_allow_html=True)
+    with m2:
+        st.markdown(f'<div class="metric-card mc-teal"><p class="metric-value">{src_count}</p><p class="metric-label">Source Systems</p></div>', unsafe_allow_html=True)
+    with m3:
+        st.markdown(f'<div class="metric-card mc-purple"><p class="metric-value">{db_count}</p><p class="metric-label">Databases</p></div>', unsafe_allow_html=True)
+    with m4:
+        st.markdown(f'<div class="metric-card mc-amber"><p class="metric-value">{proj_count}</p><p class="metric-label">Projects</p></div>', unsafe_allow_html=True)
+
+    st.markdown("")
+
+    exp_col1, exp_col2, exp_col3 = st.columns([1, 1, 3])
+    with exp_col1:
+        if entries:
+            csv_filtered = pd.DataFrame(entries).to_csv(index=False)
+            st.download_button("Export Current View", data=csv_filtered,
+                               file_name="handover_filtered_export.csv", mime="text/csv",
+                               use_container_width=True)
+    with exp_col2:
+        if st.button("Export All Records", use_container_width=True):
+            with st.spinner("Loading all records..."):
+                all_df = load_all_entries()
+            if len(all_df) > 5000:
+                st.warning(f"Large export: {len(all_df)} records. Download may take a moment.")
+            st.session_state._export_all_csv = all_df.to_csv(index=False)
+        if "_export_all_csv" in st.session_state and st.session_state._export_all_csv:
+            st.download_button("Download All Records", data=st.session_state._export_all_csv,
+                               file_name="handover_full_export.csv", mime="text/csv",
+                               use_container_width=True)
+
+    st.markdown("")
+
+    if not entries:
+        st.info("No entries found matching your filters.")
+    else:
+        for idx, entry in enumerate(entries):
+            with st.expander(f"**{safe_str(entry.get('SOURCE_SYSTEM'), 'N/A')}**  |  {safe_str(entry.get('INTERFACE_NAME'), 'N/A')}  |  {safe_str(entry.get('DATABASE_NAME'), 'N/A')}  |  {safe_str(entry.get('PRIORITY'), '')}"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown('<div class="section-label">Source & Interface</div>', unsafe_allow_html=True)
+                    st.markdown(f"**Source System:** {safe_str(entry.get('SOURCE_SYSTEM'), 'N/A')}")
+                    st.markdown(f"**Project:** {safe_str(entry.get('PROJECT'), 'N/A')}")
+                    st.markdown(f"**Interface Name:** {safe_str(entry.get('INTERFACE_NAME'), 'N/A')}")
+                    st.markdown(f"**Source Pattern:** {safe_str(entry.get('SOURCE_PATTERN'), 'N/A')}")
+                    st.markdown(f"**Mechanism:** {safe_str(entry.get('MECHANISM'), 'N/A')}")
+                    st.markdown(f"**Time of Landing:** {safe_str(entry.get('TIME_OF_LANDING'), 'N/A')}")
+                    st.markdown("")
+                    st.markdown('<div class="section-label">Tables</div>', unsafe_allow_html=True)
+                    st.markdown(f"**Database:** {safe_str(entry.get('DATABASE_NAME'), 'N/A')}")
+                    st.markdown(f"**Stage Table:** {safe_str(entry.get('STAGE_TABLE_NAME'), 'N/A')}")
+                    st.markdown(f"**PSG Table:** {safe_str(entry.get('PSG_TABLE_NAME'), 'N/A')}")
+                with col2:
+                    st.markdown('<div class="section-label">Classification</div>', unsafe_allow_html=True)
+                    st.markdown(f"**Priority:** {safe_str(entry.get('PRIORITY'), 'N/A')}")
+                    st.markdown(f"**Load to Bronze:** {safe_str(entry.get('LOAD_TO_DATA_BRONZE_PRODUCTS'), 'N/A')}")
+                    st.markdown(f"**Encrypted:** {safe_str(entry.get('ENCRYPTED'), 'N/A')}")
+                    if safe_str(entry.get('ENCRYPTED')) == 'YES':
+                        st.markdown(f"**Expiration Date:** {safe_str(entry.get('EXPIRATION_DATE'), 'N/A')}")
+                    st.markdown("")
+                    st.markdown('<div class="section-label">Contacts</div>', unsafe_allow_html=True)
+                    st.markdown(f"**Source Contact:** {safe_str(entry.get('SOURCE_CONTACT'), 'N/A')}")
+                    st.markdown(f"**ServiceNow Group:** {safe_str(entry.get('SOURCE_SERVICE_NOW_GROUP'), 'N/A')}")
+                    st.markdown(f"**Engineer:** {safe_str(entry.get('ENGINEER_EMAIL_ID'), 'N/A')}")
+                    st.markdown("")
+                    st.markdown('<div class="section-label">Documentation</div>', unsafe_allow_html=True)
+                    st.markdown(f"**HLD:** {safe_str(entry.get('HLD'), 'N/A')}")
+                    st.markdown(f"**IFM:** {safe_str(entry.get('IFM'), 'N/A')}")
+
+                comments_val = safe_str(entry.get('COMMENTS'))
+                if comments_val:
+                    st.markdown(f"**Comments:** {comments_val}")
+
+                st.markdown("---")
+                btn_col1, btn_col2, btn_col3, btn_col4 = st.columns([1, 1, 1, 3])
+                with btn_col1:
+                    if st.button("Edit", key=f"edit_{idx}_{st.session_state.current_page}", use_container_width=True):
+                        st.session_state.edit_mode = True
+                        st.session_state.edit_index = idx
+                        st.session_state.edit_entry = entry
+                        st.rerun()
+                entry_pk = {
+                    "SOURCE_SYSTEM": entry["SOURCE_SYSTEM"],
+                    "INTERFACE_NAME": entry["INTERFACE_NAME"],
+                    "DATABASE_NAME": entry["DATABASE_NAME"],
+                    "PSG_TABLE_NAME": entry["PSG_TABLE_NAME"]
+                }
+                is_delete_target = (st.session_state.delete_target_pk == entry_pk)
+                with btn_col2:
+                    if is_delete_target:
+                        if st.session_state.delete_confirm_step == 1:
+                            if st.button("Confirm?", key=f"del_c1_{idx}_{st.session_state.current_page}", use_container_width=True):
+                                st.session_state.delete_confirm_step = 2
+                                st.rerun()
+                        elif st.session_state.delete_confirm_step == 2:
+                            if st.button("DELETE!", key=f"del_c2_{idx}_{st.session_state.current_page}", use_container_width=True, type="primary"):
+                                try:
+                                    delete_entry(st.session_state.delete_target_pk, deleted_by=user_email)
+                                    st.session_state.delete_confirm_step = 0
+                                    st.session_state.delete_target = None
+                                    st.session_state.delete_target_pk = None
+                                    st.session_state.edit_mode = False
+                                    st.session_state.edit_index = None
+                                    st.session_state.pop("edit_entry", None)
+                                    st.session_state.success_message = "Entry deleted successfully."
+                                    st.session_state.success_tab = "tab2"
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Failed to delete entry: {str(e)}")
+                    else:
+                        if st.button("Delete", key=f"del_{idx}_{st.session_state.current_page}", use_container_width=True):
+                            st.session_state.delete_target = idx
+                            st.session_state.delete_target_pk = entry_pk
+                            st.session_state.delete_confirm_step = 1
+                            st.session_state.edit_mode = False
+                            st.session_state.edit_index = None
+                            st.session_state.pop("edit_entry", None)
+                            st.rerun()
+                with btn_col3:
+                    if is_delete_target and st.session_state.delete_confirm_step > 0:
+                        if st.button("Cancel", key=f"del_cancel_{idx}_{st.session_state.current_page}", use_container_width=True):
+                            st.session_state.delete_confirm_step = 0
+                            st.session_state.delete_target = None
+                            st.session_state.delete_target_pk = None
+                            st.rerun()
+
+    st.markdown("---")
+    st.markdown(f'<div class="page-info">Page {st.session_state.current_page + 1} of {total_pages}  ({total_count} records)</div>', unsafe_allow_html=True)
+    pg0, pg1, pg2, pg3, pg4, pg5 = st.columns([1, 1, 1, 1, 1, 1])
+    with pg1:
+        if st.button("First", use_container_width=True, disabled=(st.session_state.current_page == 0)):
+            st.session_state.current_page = 0
+            st.session_state.delete_confirm_step = 0
+            st.session_state.delete_target = None
+            st.session_state.delete_target_pk = None
+            st.rerun()
+    with pg2:
+        if st.button("Previous", use_container_width=True, disabled=(st.session_state.current_page == 0)):
+            st.session_state.current_page -= 1
+            st.session_state.delete_confirm_step = 0
+            st.session_state.delete_target = None
+            st.session_state.delete_target_pk = None
+            st.rerun()
+    with pg3:
+        if st.button("Next", use_container_width=True, disabled=(st.session_state.current_page >= total_pages - 1)):
+            st.session_state.current_page += 1
+            st.session_state.delete_confirm_step = 0
+            st.session_state.delete_target = None
+            st.session_state.delete_target_pk = None
+            st.rerun()
+    with pg4:
+        if st.button("Last", use_container_width=True, disabled=(st.session_state.current_page >= total_pages - 1)):
+            st.session_state.current_page = total_pages - 1
+            st.session_state.delete_confirm_step = 0
+            st.session_state.delete_target = None
+            st.session_state.delete_target_pk = None
+            st.rerun()
+
+if is_admin and tab3 is not None:
+    with tab3:
+        st.markdown('<div class="section-label">Recent Changes</div>', unsafe_allow_html=True)
+
+        history_limit = st.selectbox("Show last", [20, 50, 100], key="history_limit", label_visibility="collapsed")
+
+        history_df = session.sql(f"""
+            SELECT SOURCE_SYSTEM, INTERFACE_NAME, DATABASE_NAME, PSG_TABLE_NAME,
+                   CASE
+                       WHEN AUDIT_FILE_NAME LIKE 'DELETED_BY:%' THEN REPLACE(AUDIT_FILE_NAME, 'DELETED_BY:', '')
+                       WHEN AUDIT_FILE_NAME LIKE 'UPDATED_BY:%' THEN REPLACE(AUDIT_FILE_NAME, 'UPDATED_BY:', '')
+                       WHEN AUDIT_CURRENT = TRUE THEN ENGINEER_EMAIL_ID
+                       ELSE ENGINEER_EMAIL_ID
+                   END as CHANGED_BY,
+                   CASE
+                       WHEN AUDIT_CURRENT = TRUE AND AUDIT_END_DATE IS NULL THEN 'Active'
+                       WHEN AUDIT_FILE_NAME LIKE 'DELETED_BY:%' THEN 'Deleted'
+                       WHEN AUDIT_FILE_NAME LIKE 'UPDATED_BY:%' THEN 'Edited'
+                       WHEN AUDIT_CURRENT = FALSE AND AUDIT_END_DATE IS NOT NULL THEN 'Superseded'
+                       ELSE 'Unknown'
+                   END as STATUS,
+                   AUDIT_FILE_PROCESSED_DATE
+            FROM {TABLE}
+            ORDER BY AUDIT_FILE_PROCESSED_DATE DESC
+            LIMIT {history_limit}
+        """).to_pandas()
+
+        if history_df.empty:
+            st.info("No history found.")
+        else:
+            history_df = history_df.drop(columns=['AUDIT_FILE_PROCESSED_DATE'])
+            history_df.columns = ['Source System', 'Interface Name', 'Database',
+                                  'PSG Table', 'Changed By', 'Status']
+            st.markdown(f'<div style="max-height:500px;overflow-y:auto;border:1px solid #2a3040;border-radius:8px;">{render_html_table(history_df)}</div>', unsafe_allow_html=True)
+
+            st.markdown("---")
+            st.markdown('<div class="section-label">Change Timeline</div>', unsafe_allow_html=True)
+            timeline_df = session.sql(f"""
+                SELECT CAST(AUDIT_START_DATE AS DATE) as CHANGE_DATE,
+                       COUNT(*) as CHANGES,
+                       SUM(CASE WHEN AUDIT_CURRENT = TRUE THEN 1 ELSE 0 END) as ADDITIONS,
+                       SUM(CASE WHEN AUDIT_CURRENT = FALSE THEN 1 ELSE 0 END) as REMOVALS
+                FROM {TABLE}
+                WHERE AUDIT_START_DATE >= DATEADD(day, -30, CURRENT_DATE())
+                GROUP BY CAST(AUDIT_START_DATE AS DATE)
+                ORDER BY CHANGE_DATE DESC
+            """).to_pandas()
+
+            if not timeline_df.empty:
+                timeline_df.columns = ['Date', 'Total Changes', 'Additions', 'Removals']
+                st.markdown(f'<div style="max-height:300px;overflow-y:auto;border:1px solid #2a3040;border-radius:8px;">{render_html_table(timeline_df)}</div>', unsafe_allow_html=True)
+            else:
+                st.info("No changes in the last 30 days.")
+
+if is_admin and tab4 is not None:
+    with tab4:
+        st.markdown('<div class="section-label">Summary Dashboard</div>', unsafe_allow_html=True)
+
+        d1, d2, d3, d4 = st.columns(4)
+        with d1:
+            dash_total = get_total_count()
+            st.markdown(f'<div class="metric-card mc-blue"><p class="metric-value">{dash_total}</p><p class="metric-label">Total Interfaces</p></div>', unsafe_allow_html=True)
+        with d2:
+            p1_count = session.sql(f"SELECT COUNT(*) as c FROM {TABLE} WHERE AUDIT_CURRENT = TRUE AND PRIORITY = 'P1'").to_pandas()['C'].iloc[0]
+            st.markdown(f'<div class="metric-card mc-red"><p class="metric-value">{p1_count}</p><p class="metric-label">P1 Priority</p></div>', unsafe_allow_html=True)
+        with d3:
+            p2_count = session.sql(f"SELECT COUNT(*) as c FROM {TABLE} WHERE AUDIT_CURRENT = TRUE AND PRIORITY = 'P2'").to_pandas()['C'].iloc[0]
+            st.markdown(f'<div class="metric-card mc-orange"><p class="metric-value">{p2_count}</p><p class="metric-label">P2 Priority</p></div>', unsafe_allow_html=True)
+        with d4:
+            p3_count = session.sql(f"SELECT COUNT(*) as c FROM {TABLE} WHERE AUDIT_CURRENT = TRUE AND PRIORITY = 'P3'").to_pandas()['C'].iloc[0]
+            st.markdown(f'<div class="metric-card mc-green"><p class="metric-value">{p3_count}</p><p class="metric-label">P3 Priority</p></div>', unsafe_allow_html=True)
+
+        st.markdown("")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown("#### By Source System")
+            source_df = session.sql(f"""
+                SELECT SOURCE_SYSTEM as "Source System", COUNT(*) as "Count"
+                FROM {TABLE}
+                WHERE AUDIT_CURRENT = TRUE
+                GROUP BY SOURCE_SYSTEM
+                ORDER BY COUNT(*) DESC
+                LIMIT 10
+            """).to_pandas()
+            st.markdown(render_dashboard_table(source_df, "Source System"), unsafe_allow_html=True)
+
+            st.markdown("#### By Database Name")
+            db_df = session.sql(f"""
+                SELECT DATABASE_NAME as "Database Name", COUNT(*) as "Count"
+                FROM {TABLE}
+                WHERE AUDIT_CURRENT = TRUE
+                GROUP BY DATABASE_NAME
+                ORDER BY COUNT(*) DESC
+                LIMIT 10
+            """).to_pandas()
+            st.markdown(render_dashboard_table(db_df, "Database Name"), unsafe_allow_html=True)
+
+            st.markdown("#### By Mechanism")
+            mech_df = session.sql(f"""
+                SELECT MECHANISM as "Mechanism", COUNT(*) as "Count"
+                FROM {TABLE}
+                WHERE AUDIT_CURRENT = TRUE AND MECHANISM IS NOT NULL AND MECHANISM != ''
+                GROUP BY MECHANISM
+                ORDER BY COUNT(*) DESC
+                LIMIT 10
+            """).to_pandas()
+            st.markdown(render_dashboard_table(mech_df, "Mechanism"), unsafe_allow_html=True)
+
+        with col2:
+            st.markdown("#### By Project")
+            project_df = session.sql(f"""
+                SELECT PROJECT as "Project", COUNT(*) as "Count"
+                FROM {TABLE}
+                WHERE AUDIT_CURRENT = TRUE AND PROJECT IS NOT NULL AND PROJECT != ''
+                GROUP BY PROJECT
+                ORDER BY COUNT(*) DESC
+                LIMIT 10
+            """).to_pandas()
+            st.markdown(render_dashboard_table(project_df, "Project"), unsafe_allow_html=True)
+
+            st.markdown("#### By Interface Name")
+            interface_df = session.sql(f"""
+                SELECT INTERFACE_NAME as "Interface Name", COUNT(*) as "Count"
+                FROM {TABLE}
+                WHERE AUDIT_CURRENT = TRUE
+                GROUP BY INTERFACE_NAME
+                ORDER BY COUNT(*) DESC
+                LIMIT 10
+            """).to_pandas()
+            st.markdown(render_dashboard_table(interface_df, "Interface Name"), unsafe_allow_html=True)
+
+            st.markdown("#### By Source Pattern")
+            pattern_df = session.sql(f"""
+                SELECT SOURCE_PATTERN as "Source Pattern", COUNT(*) as "Count"
+                FROM {TABLE}
+                WHERE AUDIT_CURRENT = TRUE AND SOURCE_PATTERN IS NOT NULL AND SOURCE_PATTERN != ''
+                GROUP BY SOURCE_PATTERN
+                ORDER BY COUNT(*) DESC
+                LIMIT 10
+            """).to_pandas()
+            st.markdown(render_dashboard_table(pattern_df, "Source Pattern"), unsafe_allow_html=True)
+
+if st.session_state.edit_mode and st.session_state.edit_index is not None and "edit_entry" in st.session_state:
+    entry = st.session_state.edit_entry
+
+    @st.dialog("Edit Entry", width="large")
+    def edit_dialog():
+        st.markdown("""
+        <div class="info-box">
+            <h4>Editing Guidelines</h4>
+            <ul>
+                <li><strong>All fields are mandatory</strong> and must be filled</li>
+                <li><strong>No multiple spaces</strong> — only 1 space between words</li>
+                <li><strong>No trailing/leading spaces</strong></li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
+
+        current_edit_pk = (
+            safe_str(entry.get("SOURCE_SYSTEM")),
+            safe_str(entry.get("INTERFACE_NAME")),
+            safe_str(entry.get("DATABASE_NAME")),
+            safe_str(entry.get("PSG_TABLE_NAME"))
+        )
+        current_edit_defaults = edit_widget_defaults(entry, user_email)
+        if st.session_state.get("_edit_pk") != current_edit_pk:
+            st.session_state._edit_pk = current_edit_pk
+            for state_key, default_value in current_edit_defaults.items():
+                st.session_state[state_key] = default_value
+        else:
+            for state_key, default_value in current_edit_defaults.items():
+                if state_key not in st.session_state:
+                    st.session_state[state_key] = default_value
+            if not safe_str(st.session_state.get("edit_engineer_email")).strip():
+                st.session_state.edit_engineer_email = current_edit_defaults["edit_engineer_email"]
+
+        def _on_edit_encrypted_change():
+            if st.session_state.edit_encrypted != "YES":
+                st.session_state.edit_expiration_date = None
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown('<div class="section-label">Primary Key</div>', unsafe_allow_html=True)
+            source_system = st.text_input("Source System *", key="edit_source_system", max_chars=500)
+            show_inline_error(source_system, "SOURCE_SYSTEM")
+            interface_name = st.text_input("Interface Name *", key="edit_interface_name", max_chars=500)
+            show_inline_error(interface_name, "INTERFACE_NAME")
+            database_name = st.text_input("Database Name *", key="edit_database_name", max_chars=500)
+            show_inline_error(database_name, "DATABASE_NAME")
+            psg_table_name = st.text_input("PSG Table Name *", key="edit_psg_table_name", max_chars=500)
+            show_inline_error(psg_table_name, "PSG_TABLE_NAME")
+            st.markdown('<div class="section-label">Details</div>', unsafe_allow_html=True)
+            project = st.text_input("Project *", key="edit_project", max_chars=500)
+            show_inline_error(project, "PROJECT")
+            source_pattern = st.selectbox(
+                "Source Pattern *",
+                options_with_existing(SOURCE_PATTERN_OPTIONS, st.session_state.get("edit_source_pattern")),
+                key="edit_source_pattern",
+            )
+            mechanism = st.selectbox(
+                "Mechanism *",
+                options_with_existing(MECHANISM_OPTIONS, st.session_state.get("edit_mechanism")),
+                key="edit_mechanism",
+            )
+            time_of_landing = st.text_input("Time of Landing *", key="edit_time_of_landing", max_chars=500, placeholder="e.g. Daily, Weekly, Hourly, 6:00 AM AEST")
+            show_inline_error(time_of_landing, "TIME_OF_LANDING")
+        with col2:
+            st.markdown('<div class="section-label">Table & Classification</div>', unsafe_allow_html=True)
+            stage_table_name = st.text_input("Stage Table Name *", key="edit_stage_table_name", max_chars=500)
+            show_inline_error(stage_table_name, "STAGE_TABLE_NAME")
+            priority = st.selectbox(
+                "Priority *",
+                options_with_existing(PRIORITY_OPTIONS, st.session_state.get("edit_priority")),
+                key="edit_priority",
+            )
+            load_bronze = st.selectbox(
+                "Load to Data Bronze Products *",
+                options_with_existing(LOAD_BRONZE_OPTIONS, st.session_state.get("edit_load_bronze")),
+                key="edit_load_bronze",
+            )
+            encrypted = st.selectbox(
+                "Encrypted *",
+                options_with_existing(ENCRYPTED_OPTIONS, st.session_state.get("edit_encrypted")),
+                key="edit_encrypted", on_change=_on_edit_encrypted_change,
+            )
+            if encrypted == "YES":
+                expiration_date = st.date_input(
+                    "Expiration Date *",
+                    key="edit_expiration_date",
+                )
+                show_inline_error(expiration_date, "EXPIRATION_DATE", encrypted_value=encrypted)
+            else:
+                st.markdown(
+                    '<label style="font-size:14px;color:#fafafa;margin-bottom:4px;display:block;">Expiration Date</label>'
+                    '<div style="background:#12151c;border:1px solid #2a3040;border-radius:6px;padding:10px 14px;'
+                    'color:#4a5068;font-size:14px;">Select Encrypted = YES to enable</div>',
+                    unsafe_allow_html=True,
+                )
+                expiration_date = None
+            st.markdown('<div class="section-label">Contacts</div>', unsafe_allow_html=True)
+            source_contact = st.text_input("Source Contact *", key="edit_source_contact", max_chars=500)
+            show_inline_error(source_contact, "SOURCE_CONTACT")
+            source_snow_group = st.text_input("Source Service Now Group *", key="edit_source_snow_group", max_chars=500)
+            show_inline_error(source_snow_group, "SOURCE_SERVICE_NOW_GROUP")
+            engineer_email = st.text_input("Engineer Email ID *", key="edit_engineer_email", disabled=True)
+            st.markdown('<div class="section-label">Documentation</div>', unsafe_allow_html=True)
+            hld = st.text_input("HLD (Confluence URL) *", key="edit_hld", max_chars=500)
+            show_inline_error(hld, "HLD")
+            ifm = st.text_input("IFM (Confluence URL) *", key="edit_ifm", max_chars=500)
+            show_inline_error(ifm, "IFM")
+        comments = st.text_area("Comments", key="edit_comments", height=100, max_chars=2000)
+        show_inline_error(comments, "COMMENTS")
+
+        btn_col1, btn_col2 = st.columns(2)
+        with btn_col1:
+            if st.button("Update", type="primary", use_container_width=True):
+                updated_data = {
+                    "SOURCE_SYSTEM": source_system, "PROJECT": project, "INTERFACE_NAME": interface_name,
+                    "SOURCE_PATTERN": source_pattern, "MECHANISM": mechanism, "TIME_OF_LANDING": time_of_landing,
+                    "DATABASE_NAME": database_name, "STAGE_TABLE_NAME": stage_table_name, "PSG_TABLE_NAME": psg_table_name,
+                    "PRIORITY": priority, "LOAD_TO_DATA_BRONZE_PRODUCTS": load_bronze, "SOURCE_CONTACT": source_contact,
+                    "SOURCE_SERVICE_NOW_GROUP": source_snow_group, "ENGINEER_EMAIL_ID": engineer_email,
+                    "HLD": hld, "IFM": ifm, "COMMENTS": comments,
+                    "ENCRYPTED": encrypted, "EXPIRATION_DATE": expiration_date
+                }
+                errors = validate_form(updated_data)
+                if errors:
+                    st.error("Please fix the following errors before updating:")
+                    for category, fields in errors:
+                        st.markdown(f'<div class="error-msg"><strong>{category}:</strong> {", ".join(fields)}</div>', unsafe_allow_html=True)
+                else:
+                    updated_data = clean_all_fields(updated_data)
+                    old_pk = {
+                        "SOURCE_SYSTEM": safe_str(entry.get("SOURCE_SYSTEM")),
+                        "INTERFACE_NAME": safe_str(entry.get("INTERFACE_NAME")),
+                        "DATABASE_NAME": safe_str(entry.get("DATABASE_NAME")),
+                        "PSG_TABLE_NAME": safe_str(entry.get("PSG_TABLE_NAME"))
+                    }
+                    new_pk = {
+                        "SOURCE_SYSTEM": updated_data["SOURCE_SYSTEM"],
+                        "INTERFACE_NAME": updated_data["INTERFACE_NAME"],
+                        "DATABASE_NAME": updated_data["DATABASE_NAME"],
+                        "PSG_TABLE_NAME": updated_data["PSG_TABLE_NAME"]
+                    }
+                    pk_changed = any(old_pk[k].upper() != new_pk[k].upper() for k in old_pk)
+                    if pk_changed and check_duplicate_in_db(
+                        new_pk["SOURCE_SYSTEM"], new_pk["INTERFACE_NAME"],
+                        new_pk["DATABASE_NAME"], new_pk["PSG_TABLE_NAME"]
+                    ):
+                        st.error("An entry with this primary key combination already exists.")
+                    else:
+                        try:
+                            update_entry(old_pk, updated_data, modified_by=user_email)
+                            st.session_state.edit_mode = False
+                            st.session_state.edit_index = None
+                            st.session_state.pop("edit_entry", None)
+                            st.session_state.success_message = "Entry updated successfully."
+                            st.session_state.success_tab = "tab2"
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed to update entry: {str(e)}")
+        with btn_col2:
+            if st.button("Cancel", use_container_width=True):
+                st.session_state.edit_mode = False
+                st.session_state.edit_index = None
+                st.session_state.pop("edit_entry", None)
+                st.rerun()
+
+    edit_dialog()
+
+st.markdown("""
+<div style="position: fixed; bottom: 10px; right: 20px; font-size: 11px; color: #4a5068;">
+    Any issues with the app? Contact <strong style="color: #8b95a5;">Sandesh Shetty</strong>
+</div>
+""", unsafe_allow_html=True)
