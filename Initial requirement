@@ -65,3 +65,4 @@ Streamlit UI
 
 The app should use RED colour for all the buttons. Use COles official red colour. Secondly REd texts on black background. Refere to offcial Coles colour guidelines. 
 
+Coles Official Red: #E50016 (RGB: 229, 0, 22 | CMYK: 0, 100, 90, 10)Coles Official Black: #000000 (RGB: 0, 0, 0 | CMYK: 0, 0, 0, 100)
