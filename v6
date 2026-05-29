@@ -1,0 +1,539 @@
+import datetime as dt
+import html
+import re
+from typing import Any, Optional
+
+import pandas as pd
+import streamlit as st
+from snowflake.snowpark import Session
+
+TABLE_NAME = "DB_CORE_PRD.PSG.ABOVE_STORE_USER_GROUP_MEMBERS"
+TS_FMT = "YYYY-MM-DD HH24:MI:SS.FF9"
+
+GROUPS = [
+    "BIP_RepPilot_Consumer",
+    "BIP_SpaceRange_Consumer",
+    "BIP_StockMgmt_Consumer",
+    "BIP_StoreSupport_Consumer",
+    "BIP_CUST_TXN_Consumer",
+    "BIP_CUST_TXN_Author",
+    "BIP_DCLoadVal_Consumer",
+    "BIP_ProdFin_Consumer",
+]
+
+EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+\-']+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
+
+st.set_page_config(layout="wide")
+
+# ── Theme (light/default — no dark overrides) ──
+st.markdown("""
+<style>
+* { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+.block-container { padding-top: 1rem !important; padding-bottom: 1rem !important; max-width: 100% !important; }
+
+.header-bar {
+    background: linear-gradient(135deg, #1e40af, #3b82f6);
+    border-radius: 10px; padding: 18px 24px; margin-bottom: 20px;
+    display: flex; justify-content: space-between; align-items: center;
+}
+.header-title { font-size: 22px !important; font-weight: 700; color: #ffffff; margin: 0; }
+
+.metric-card {
+    background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px;
+    padding: 14px 16px; text-align: center;
+}
+.metric-value { font-size: 26px; font-weight: 700; margin: 0; }
+.metric-label { font-size: 10px; color: #64748b; margin: 4px 0 0; text-transform: uppercase; letter-spacing: 0.8px; font-weight: 500; }
+.mc-blue { border-left: 3px solid #3b82f6; } .mc-blue .metric-value { color: #3b82f6; }
+.mc-green { border-left: 3px solid #22c55e; } .mc-green .metric-value { color: #16a34a; }
+.mc-amber { border-left: 3px solid #f59e0b; } .mc-amber .metric-value { color: #d97706; }
+.mc-red { border-left: 3px solid #ef4444; } .mc-red .metric-value { color: #dc2626; }
+
+.section-label {
+    font-size: 11px; font-weight: 600; color: #3b82f6; text-transform: uppercase;
+    letter-spacing: 1px; margin: 16px 0 8px; padding-bottom: 6px; border-bottom: 1px solid #e2e8f0;
+}
+
+.danger-zone {
+    background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 14px; margin-top: 12px;
+}
+.danger-zone p { color: #991b1b; font-size: 13px; margin: 0 0 10px; }
+
+.help-text { color: #94a3b8; font-size: 13px; }
+</style>
+""", unsafe_allow_html=True)
+
+
+# ── Snowflake helpers ──
+
+@st.cache_resource(show_spinner=False)
+def get_session() -> Session:
+    return Session.builder.getOrCreate()
+
+
+def norm_email(value: Any) -> str:
+    return re.sub(r"\s+", "", str(value or "").strip().lower())
+
+
+def valid_email(value: str) -> bool:
+    return bool(EMAIL_RE.match(norm_email(value)))
+
+
+def esc(value: Any) -> str:
+    return str(value or "").replace("'", "''")
+
+
+def ts(value: dt.datetime) -> str:
+    return f"TO_TIMESTAMP_NTZ('{value.strftime('%Y-%m-%d %H:%M:%S.%f')}', 'YYYY-MM-DD HH24:MI:SS.FF6')"
+
+
+def combine_date_time(date_value: dt.date, time_value: dt.time) -> Optional[dt.datetime]:
+    if date_value is None or time_value is None:
+        return None
+    return dt.datetime.combine(date_value, time_value if isinstance(time_value, dt.time) else time_value.time())
+
+
+def as_dt(value: Any) -> Optional[dt.datetime]:
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
+    if isinstance(value, dt.datetime):
+        return value.replace(tzinfo=None)
+    try:
+        parsed = pd.to_datetime(value)
+        if pd.isna(parsed):
+            return None
+        return parsed.to_pydatetime().replace(tzinfo=None)
+    except Exception:
+        return None
+
+
+def fmt_dt(value: Any) -> str:
+    parsed = as_dt(value)
+    return parsed.strftime("%d %b %Y %I:%M %p") if parsed else ""
+
+
+def current_user_email(session: Session) -> str:
+    try:
+        user = getattr(st, "user", None)
+        email = user.get("email") if user and hasattr(user, "get") else getattr(user, "email", None)
+        email = norm_email(email)
+        if email:
+            return email
+    except Exception:
+        pass
+    try:
+        return norm_email(session.sql("SELECT CURRENT_USER()").to_pandas().iloc[0, 0]) or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def run_df(session: Session, sql: str) -> pd.DataFrame:
+    return session.sql(sql).to_pandas()
+
+
+def status_sql() -> str:
+    return """
+        CASE
+            WHEN TO_DATE <= CURRENT_TIMESTAMP() THEN 'Expired'
+            WHEN FROM_DATE > CURRENT_TIMESTAMP() THEN 'Scheduled'
+            WHEN FROM_DATE <= CURRENT_TIMESTAMP() AND TO_DATE > CURRENT_TIMESTAMP() THEN 'Active'
+            ELSE 'Expired'
+        END
+    """
+
+
+def load_access(session: Session, search_email: str = "", active_only: bool = False, limit: int = 300) -> pd.DataFrame:
+    where_parts = ["1 = 1"]
+    clean_email = esc(norm_email(search_email))
+    if clean_email:
+        where_parts.append(f"LOWER(UPN) LIKE '%{clean_email}%'")
+    if active_only:
+        where_parts.append("FROM_DATE <= CURRENT_TIMESTAMP()")
+        where_parts.append("TO_DATE > CURRENT_TIMESTAMP()")
+    where_sql = " AND ".join(where_parts)
+    return run_df(session, f"""
+        SELECT UPN AS "Email", USER_GROUP_NAME AS "Group",
+               FROM_DATE AS "From Date", TO_DATE AS "To Date",
+               {status_sql()} AS "Status",
+               CREATED_BY AS "Created By", CREATED_TS AS "Created At",
+               UPDATED_BY AS "Updated By", UPDATED_TS AS "Updated At",
+               TO_VARCHAR(CREATED_TS, '{TS_FMT}') AS "Created Key"
+        FROM {TABLE_NAME}
+        WHERE {where_sql}
+        ORDER BY LOWER(UPN), USER_GROUP_NAME, FROM_DATE DESC
+        LIMIT {int(limit)}
+    """)
+
+
+def show_table(df: pd.DataFrame) -> None:
+    if df.empty:
+        st.info("No records found.")
+        return
+    out = df.copy()
+    for col in ["From Date", "To Date", "Created At", "Updated At", "Existing From", "Existing To"]:
+        if col in out.columns:
+            out[col] = out[col].apply(fmt_dt)
+    out = out.drop(columns=[c for c in ["Created Key"] if c in out.columns], errors="ignore")
+    st.dataframe(out, use_container_width=True, hide_index=True)
+
+
+def metric_card(value: int, label: str, color: str = "blue") -> str:
+    return f'<div class="metric-card mc-{color}"><p class="metric-value">{int(value)}</p><p class="metric-label">{html.escape(label)}</p></div>'
+
+
+def calc_counts(df: pd.DataFrame) -> dict:
+    if df.empty or "Status" not in df.columns:
+        return {"Total": 0, "Active": 0, "Scheduled": 0, "Expired": 0}
+    status = df["Status"].fillna("")
+    return {
+        "Total": int(len(df)),
+        "Active": int((status == "Active").sum()),
+        "Scheduled": int((status == "Scheduled").sum()),
+        "Expired": int((status == "Expired").sum()),
+    }
+
+
+def find_overlaps(session: Session, email: str, groups: list[str], start_dt: dt.datetime,
+                   end_dt: dt.datetime, exclude_row: Optional[pd.Series] = None) -> pd.DataFrame:
+    group_values = ", ".join(f"'{esc(group)}'" for group in groups)
+    exclude_sql = ""
+    if exclude_row is not None:
+        exclude_sql = f"""
+          AND NOT (LOWER(UPN) = '{esc(norm_email(exclude_row["Email"]))}'
+              AND USER_GROUP_NAME = '{esc(exclude_row["Group"])}'
+              AND COALESCE(TO_VARCHAR(CREATED_TS, '{TS_FMT}'), '') = '{esc(exclude_row["Created Key"])}')
+        """
+    return run_df(session, f"""
+        SELECT UPN AS "Email", USER_GROUP_NAME AS "Group",
+               FROM_DATE AS "Existing From", TO_DATE AS "Existing To",
+               {status_sql()} AS "Status"
+        FROM {TABLE_NAME}
+        WHERE LOWER(UPN) = '{esc(norm_email(email))}'
+          AND USER_GROUP_NAME IN ({group_values})
+          AND FROM_DATE < {ts(end_dt)} AND TO_DATE > {ts(start_dt)}
+          {exclude_sql}
+        ORDER BY USER_GROUP_NAME, FROM_DATE
+    """)
+
+
+def insert_access(session: Session, email: str, groups: list[str], start_dt: dt.datetime,
+                   end_dt: dt.datetime, created_by: str) -> None:
+    rows_sql = ",\n".join(
+        f"('{esc(norm_email(email))}', '{esc(group)}', {ts(start_dt)}, {ts(end_dt)}, "
+        f"CURRENT_TIMESTAMP(), '{esc(norm_email(created_by) or 'unknown')}', NULL, NULL)"
+        for group in groups
+    )
+    try:
+        session.sql("BEGIN").collect()
+        session.sql(f"""
+            INSERT INTO {TABLE_NAME}
+                (UPN, USER_GROUP_NAME, FROM_DATE, TO_DATE, CREATED_TS, CREATED_BY, UPDATED_TS, UPDATED_BY)
+            SELECT v.UPN, v.USER_GROUP_NAME, v.FROM_DATE, v.TO_DATE, v.CREATED_TS, v.CREATED_BY, v.UPDATED_TS, v.UPDATED_BY
+            FROM VALUES {rows_sql}
+            AS v(UPN, USER_GROUP_NAME, FROM_DATE, TO_DATE, CREATED_TS, CREATED_BY, UPDATED_TS, UPDATED_BY)
+        """).collect()
+        session.sql("COMMIT").collect()
+    except Exception:
+        try:
+            session.sql("ROLLBACK").collect()
+        except Exception:
+            pass
+        raise
+
+
+def update_access_window(session: Session, row: pd.Series, start_dt: dt.datetime,
+                          end_dt: dt.datetime, updated_by: str) -> None:
+    session.sql(f"""
+        UPDATE {TABLE_NAME}
+        SET FROM_DATE = {ts(start_dt)}, TO_DATE = {ts(end_dt)},
+            UPDATED_TS = CURRENT_TIMESTAMP(),
+            UPDATED_BY = '{esc(norm_email(updated_by) or 'unknown')}'
+        WHERE LOWER(UPN) = '{esc(norm_email(row["Email"]))}'
+          AND USER_GROUP_NAME = '{esc(row["Group"])}'
+          AND COALESCE(TO_VARCHAR(CREATED_TS, '{TS_FMT}'), '') = '{esc(row["Created Key"])}'
+    """).collect()
+
+
+def remove_access(session: Session, row: pd.Series, updated_by: str) -> None:
+    session.sql(f"""
+        UPDATE {TABLE_NAME}
+        SET TO_DATE = CURRENT_TIMESTAMP(), UPDATED_TS = CURRENT_TIMESTAMP(),
+            UPDATED_BY = '{esc(norm_email(updated_by) or 'unknown')}'
+        WHERE LOWER(UPN) = '{esc(norm_email(row["Email"]))}'
+          AND USER_GROUP_NAME = '{esc(row["Group"])}'
+          AND COALESCE(TO_VARCHAR(CREATED_TS, '{TS_FMT}'), '') = '{esc(row["Created Key"])}'
+          AND TO_DATE > CURRENT_TIMESTAMP()
+    """).collect()
+
+
+def selected_groups(prefix: str) -> list[str]:
+    selected = []
+    cols = st.columns(2)
+    for index, group in enumerate(GROUPS):
+        with cols[index % 2]:
+            if st.checkbox(group, key=f"{prefix}_{group}"):
+                selected.append(group)
+    return selected
+
+
+def window_error(start_dt: Optional[dt.datetime], end_dt: Optional[dt.datetime]) -> Optional[str]:
+    if start_dt is None or end_dt is None:
+        return "From and To date/time are required."
+    if start_dt >= end_dt:
+        return "From must be before To."
+    return None
+
+
+# ── Header ──
+
+def render_header(email: str) -> None:
+    st.markdown(f"""
+    <div class="header-bar">
+        <div>
+            <p class="header-title">BIP Access Manager</p>
+            <p style="font-size:13px;color:#dbeafe;margin:4px 0 0;">Manage user group access for Above Store reporting</p>
+        </div>
+        <div style="text-align:right;">
+            <p style="font-size:11px;color:#bfdbfe;margin:0;">Signed in as</p>
+            <p style="font-size:13px;color:#ffffff;font-weight:600;margin:2px 0 0;">{html.escape(email)}</p>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+# ── Tab: View ──
+
+def view_tab(session: Session) -> None:
+    st.markdown('<div class="section-label">Search user access</div>', unsafe_allow_html=True)
+
+    c1, c2 = st.columns([3, 1])
+    with c1:
+        email = st.text_input("User email", key="view_email", placeholder="name@coles.com.au")
+    with c2:
+        st.markdown("<br>", unsafe_allow_html=True)
+        active_only = st.checkbox("Active only", value=True, key="view_active_only")
+
+    if not email.strip():
+        st.markdown('<p class="help-text">Enter an email address to view access records.</p>', unsafe_allow_html=True)
+        return
+
+    try:
+        df = load_access(session, email, active_only, 300)
+    except Exception as error:
+        st.error(f"Failed to load: {error}")
+        return
+
+    counts = calc_counts(df)
+    mc1, mc2, mc3, mc4 = st.columns(4)
+    with mc1:
+        st.markdown(metric_card(counts["Total"], "Total", "blue"), unsafe_allow_html=True)
+    with mc2:
+        st.markdown(metric_card(counts["Active"], "Active", "green"), unsafe_allow_html=True)
+    with mc3:
+        st.markdown(metric_card(counts["Scheduled"], "Scheduled", "amber"), unsafe_allow_html=True)
+    with mc4:
+        st.markdown(metric_card(counts["Expired"], "Expired", "red"), unsafe_allow_html=True)
+
+    st.markdown('<div class="section-label">Access records</div>', unsafe_allow_html=True)
+    show_table(df)
+
+
+# ── Tab: Provision ──
+
+def provision_tab(session: Session, created_by: str) -> None:
+    with st.form("provision_form", clear_on_submit=False):
+        st.markdown('<div class="section-label">User</div>', unsafe_allow_html=True)
+        email = st.text_input("User email", placeholder="name@coles.com.au", key="provision_email")
+
+        st.markdown('<div class="section-label">Groups</div>', unsafe_allow_html=True)
+        groups = selected_groups("provision_group")
+
+        st.markdown('<div class="section-label">Start access</div>', unsafe_allow_html=True)
+        now = dt.datetime.now()
+        default_to = now + dt.timedelta(days=30)
+
+        fc1, fc2 = st.columns(2)
+        with fc1:
+            from_date = st.date_input("Date", value=now.date(), key="prov_from_date")
+        with fc2:
+            from_time = st.time_input("Time", value=dt.time(9, 0), step=dt.timedelta(minutes=15), key="prov_from_time")
+
+        st.markdown('<div class="section-label">End access</div>', unsafe_allow_html=True)
+
+        fc3, fc4 = st.columns(2)
+        with fc3:
+            to_date = st.date_input("Date", value=default_to.date(), key="prov_to_date")
+        with fc4:
+            to_time = st.time_input("Time", value=dt.time(17, 0), step=dt.timedelta(minutes=15), key="prov_to_time")
+
+        submitted = st.form_submit_button("Provision Access", use_container_width=True)
+
+    if not submitted:
+        return
+
+    clean_email = norm_email(email)
+    start_dt = combine_date_time(from_date, from_time)
+    end_dt = combine_date_time(to_date, to_time)
+
+    if not valid_email(clean_email):
+        st.error("Enter a valid email address.")
+        return
+    if not groups:
+        st.error("Select at least one group.")
+        return
+    error = window_error(start_dt, end_dt)
+    if error:
+        st.error(error)
+        return
+
+    try:
+        dupes = find_overlaps(session, clean_email, groups, start_dt, end_dt)
+        if not dupes.empty:
+            st.warning("Overlapping access exists for this user and window.")
+            show_table(dupes)
+            return
+        insert_access(session, clean_email, groups, start_dt, end_dt, created_by)
+        st.success(f"Provisioned {len(groups)} group{'s' if len(groups) != 1 else ''} for {clean_email}.")
+    except Exception as error:
+        st.error(f"Failed: {error}")
+
+
+# ── Tab: Manage ──
+
+def manage_tab(session: Session, updated_by: str) -> None:
+    st.markdown('<div class="section-label">Find user access</div>', unsafe_allow_html=True)
+    email = st.text_input("User email", key="manage_email", placeholder="name@coles.com.au")
+
+    if not email.strip():
+        st.markdown('<p class="help-text">Enter an email address to manage access records.</p>', unsafe_allow_html=True)
+        return
+
+    try:
+        df = load_access(session, email, False, 500)
+    except Exception as error:
+        st.error(f"Failed to load: {error}")
+        return
+
+    if df.empty:
+        st.info("No access records found for this user.")
+        return
+
+    st.markdown('<div class="section-label">All records</div>', unsafe_allow_html=True)
+    show_table(df)
+
+    st.markdown('<div class="section-label">Edit record</div>', unsafe_allow_html=True)
+
+    labels = [
+        f"{row['Group']} | {row['Status']} | {fmt_dt(row['From Date'])} - {fmt_dt(row['To Date'])}"
+        for _, row in df.iterrows()
+    ]
+
+    selected_index = st.selectbox("Select record", options=list(range(len(df))),
+                                   format_func=lambda i: labels[i], key="manage_record")
+
+    row = df.iloc[selected_index]
+    current_from = as_dt(row["From Date"]) or dt.datetime.now()
+    current_to = as_dt(row["To Date"]) or (dt.datetime.now() + dt.timedelta(days=30))
+    suffix = re.sub(r"[^A-Za-z0-9_]", "_", f"{row['Email']}_{row['Group']}_{row['Created Key']}")[:80]
+
+    st.markdown('<div class="section-label">Update start</div>', unsafe_allow_html=True)
+
+    with st.form(f"update_form_{suffix}"):
+        uc1, uc2 = st.columns(2)
+        with uc1:
+            from_date = st.date_input("Date", value=current_from.date(), key=f"fd_{suffix}")
+        with uc2:
+            from_time = st.time_input("Time", value=current_from.time().replace(microsecond=0),
+                                       step=dt.timedelta(minutes=15), key=f"ft_{suffix}")
+
+        st.markdown('<div class="section-label">Update end</div>', unsafe_allow_html=True)
+
+        uc3, uc4 = st.columns(2)
+        with uc3:
+            to_date = st.date_input("Date", value=current_to.date(), key=f"td_{suffix}")
+        with uc4:
+            to_time = st.time_input("Time", value=current_to.time().replace(microsecond=0),
+                                     step=dt.timedelta(minutes=15), key=f"tt_{suffix}")
+
+        update_clicked = st.form_submit_button("Update Access Window", use_container_width=True)
+
+    if update_clicked:
+        start_dt = combine_date_time(from_date, from_time)
+        end_dt = combine_date_time(to_date, to_time)
+        error = window_error(start_dt, end_dt)
+        if error:
+            st.error(error)
+            return
+        try:
+            dupes = find_overlaps(session, row["Email"], [row["Group"]], start_dt, end_dt, row)
+            if not dupes.empty:
+                st.warning("Updated window overlaps with another record.")
+                show_table(dupes)
+                return
+            update_access_window(session, row, start_dt, end_dt, updated_by)
+            st.success("Access window updated.")
+            st.rerun()
+        except Exception as error:
+            st.error(f"Failed: {error}")
+
+    # Remove access
+    if row["Status"] == "Active" or row["Status"] == "Scheduled":
+        st.markdown('<div class="section-label">Revoke access</div>', unsafe_allow_html=True)
+
+        remove_key = f"{row['Email']}|{row['Group']}|{row['Created Key']}"
+
+        if st.session_state.get("confirm_remove") != remove_key:
+            if st.button("Revoke This Access", use_container_width=True, key="remove_btn"):
+                st.session_state.confirm_remove = remove_key
+                st.rerun()
+        else:
+            st.markdown("""<div class="danger-zone">
+                <p>This will immediately expire this access record. Are you sure?</p>
+            </div>""", unsafe_allow_html=True)
+
+            rc1, rc2 = st.columns(2)
+            with rc1:
+                if st.button("Yes, revoke now", use_container_width=True, key="confirm_revoke"):
+                    try:
+                        remove_access(session, row, updated_by)
+                        st.session_state.confirm_remove = None
+                        st.success("Access revoked.")
+                        st.rerun()
+                    except Exception as error:
+                        st.error(f"Failed: {error}")
+            with rc2:
+                if st.button("Cancel", use_container_width=True, key="cancel_revoke"):
+                    st.session_state.confirm_remove = None
+                    st.rerun()
+
+
+# ── Main ──
+
+def main() -> None:
+    try:
+        session = get_session()
+    except Exception as error:
+        st.error(f"Unable to connect to Snowflake: {error}")
+        st.stop()
+
+    user_email = current_user_email(session)
+    render_header(user_email)
+
+    tab1, tab2, tab3 = st.tabs(["VIEW ACCESS", "PROVISION", "MANAGE"])
+
+    with tab1:
+        view_tab(session)
+    with tab2:
+        provision_tab(session, user_email)
+    with tab3:
+        manage_tab(session, user_email)
+
+
+if __name__ == "__main__":
+    main()
+    
