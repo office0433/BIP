@@ -1,0 +1,67 @@
+This is the table where we need to insert data from streamlit app
+
+select * from DB_CORE_PRD.PSG.ABOVE_STORE_USER_GROUP_MEMBERS
+
+
+create or replace TABLE DB_CORE_PRD.PSG.ABOVE_STORE_USER_GROUP_MEMBERS (
+	UPN VARCHAR(16777216) NOT NULL,
+	USER_GROUP_NAME VARCHAR(16777216) NOT NULL,
+	FROM_DATE TIMESTAMP_NTZ(9) NOT NULL,
+	TO_DATE TIMESTAMP_NTZ(9),
+	CREATED_TS TIMESTAMP_NTZ(9) DEFAULT CURRENT_TIMESTAMP(),
+	CREATED_BY VARCHAR(16777216) DEFAULT CURRENT_USER(),
+	UPDATED_TS TIMESTAMP_NTZ(9),
+	UPDATED_BY VARCHAR(16777216)
+);
+
+
+
+Here is the new app requirement:
+
+We need to create a streamlit app to add user email address, group name, from date, to date to the below table
+
+DB_CORE_PRD.PSG.ABOVE_STORE_USER_GROUP_MEMBERS
+
+UPN- Users email address
+USER_GROUP_NAME - Group Name (we need to hardcode this in the app and provide as options to select with checkboxes.One user can be assigned with multiple groups)
+FROM_DATE- Access start date and time
+TO_DATE - Access end date and time
+CREATED_TS - It should auto populate the inserted time
+CREATED_BY- It should auto pick the users email address who added it
+UPDATED_TS - Keep it NUll
+UPDATED_BY - Keep it NUll
+
+We should create 3 tabs in the app
+
+1. View
+
+We should be qucikly able to search user's email address see what access currently the user as
+
+2. Provision
+
+Here we should be able to add user's email address and options to choose the group names as checkboxes with group name
+here are group names we should hardcode it in the app 
+
+BIP_RepPilot_Consumer
+BIP_SpaceRange_Consumer
+BIP_StockMgmt_Consumer
+BIP_StoreSupport_Consumer
+BIP_CUST_TXN_Consumer
+BIP_CUST_TXN_Author
+BIP_DCLoadVal_Consumer
+BIP_ProdFin_Consumer
+
+
+There is always unique combination of email and group name. 
+
+We should not allow duplication entry. Should throw an clear warning if tried to insert it. 
+
+3. UPDATED_BY
+
+We should be able to edit, delete the existing permissions of the users or change to and from date. 
+
+
+Streamlit UI
+
+The app should use RED colour for all the buttons. Use COles official red colour. Secondly REd texts on black background. Refere to offcial Coles colour guidelines. 
+
