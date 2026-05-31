@@ -43,6 +43,10 @@ st.markdown(
 .danger-zone { background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 14px; margin-top: 12px; }
 .danger-zone p { color: #991b1b; font-size: 13px; margin: 0 0 10px; }
 .help-text { color: #94a3b8; font-size: 13px; }
+.readonly-field { background: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 6px; color: #64748b; font-size: 14px; padding: 9px 12px; min-height: 38px; }
+.selected-record { background: #f8fafc; border: 1px solid #dbeafe; border-left: 4px solid #2563eb; border-radius: 8px; padding: 12px 14px; margin: 8px 0 12px; }
+.selected-record-title { color: #0f172a; font-weight: 700; margin: 0 0 4px; }
+.selected-record-meta { color: #475569; font-size: 13px; margin: 0; }
 [data-testid="stAlert"] { border-radius: 8px; }
 [data-testid="stFormSubmitButton"] button {
     background-color: #2563eb !important;
@@ -172,39 +176,65 @@ def search_rank_sql(search: str) -> str:
     )
 
 
-def load_access(s: Session, search: str = "", show_active: bool = True, show_expired: bool = False, limit: int = 300) -> pd.DataFrame:
+def load_access(
+    s: Session,
+    search: str = "",
+    show_active: bool = True,
+    show_expired: bool = False,
+    limit: int = 300,
+) -> pd.DataFrame:
     where = ["1 = 1"]
     add_email_search_filter(where, search)
     if show_active and not show_expired:
-        where.append("TO_DATE > CURRENT_TIMESTAMP()")
+        where.append("FROM_DATE <= CURRENT_TIMESTAMP() AND TO_DATE > CURRENT_TIMESTAMP()")
     elif show_expired and not show_active:
         where.append("TO_DATE <= CURRENT_TIMESTAMP()")
+    elif show_active and show_expired:
+        where.append("((FROM_DATE <= CURRENT_TIMESTAMP() AND TO_DATE > CURRENT_TIMESTAMP()) OR TO_DATE <= CURRENT_TIMESTAMP())")
 
-    return run_df(s, f"""
-        SELECT UPN AS "Email", USER_GROUP_NAME AS "Group", FROM_DATE AS "From Date", TO_DATE AS "To Date",
-               {status_sql()} AS "Status", CREATED_BY AS "Created By", CREATED_TS AS "Created At",
-               UPDATED_BY AS "Updated By", UPDATED_TS AS "Updated At",
+    return run_df(
+        s,
+        f"""
+        SELECT UPN AS "Email",
+               USER_GROUP_NAME AS "Group",
+               FROM_DATE AS "From Date",
+               TO_DATE AS "To Date",
+               {status_sql()} AS "Status",
+               CREATED_BY AS "Created By",
+               CREATED_TS AS "Created At",
+               UPDATED_BY AS "Updated By",
+               UPDATED_TS AS "Updated At",
                TO_VARCHAR(CREATED_TS, '{TS_FMT}') AS "Created Key"
         FROM {TABLE_NAME}
         WHERE {" AND ".join(where)}
         ORDER BY {search_rank_sql(search)}, LOWER(UPN), USER_GROUP_NAME, FROM_DATE DESC
         LIMIT {int(limit)}
-    """)
+        """,
+    )
 
 
 def load_manage_access(s: Session, search: str = "", limit: int = 500) -> pd.DataFrame:
     where = ["1 = 1"]
     add_email_search_filter(where, search)
-    return run_df(s, f"""
-        SELECT UPN AS "Email", USER_GROUP_NAME AS "Group", FROM_DATE AS "From Date", TO_DATE AS "To Date",
-               {status_sql()} AS "Status", CREATED_BY AS "Created By", CREATED_TS AS "Created At",
-               UPDATED_BY AS "Updated By", UPDATED_TS AS "Updated At",
+    return run_df(
+        s,
+        f"""
+        SELECT UPN AS "Email",
+               USER_GROUP_NAME AS "Group",
+               FROM_DATE AS "From Date",
+               TO_DATE AS "To Date",
+               {status_sql()} AS "Status",
+               CREATED_BY AS "Created By",
+               CREATED_TS AS "Created At",
+               UPDATED_BY AS "Updated By",
+               UPDATED_TS AS "Updated At",
                TO_VARCHAR(CREATED_TS, '{TS_FMT}') AS "Created Key"
         FROM {TABLE_NAME}
         WHERE {" AND ".join(where)}
         ORDER BY {search_rank_sql(search)}, LOWER(UPN), USER_GROUP_NAME, FROM_DATE DESC
         LIMIT {int(limit)}
-    """)
+        """,
+    )
 
 
 def show_table(df: pd.DataFrame) -> None:
@@ -219,6 +249,15 @@ def show_table(df: pd.DataFrame) -> None:
     st.dataframe(out, use_container_width=True, hide_index=True)
 
 
+def metric_card(v: int, label: str, color: str = "blue") -> str:
+    return (
+        f'<div class="metric-card mc-{color}">'
+        f'<p class="metric-value">{int(v)}</p>'
+        f'<p class="metric-label">{html.escape(label)}</p>'
+        f"</div>"
+    )
+
+
 def calc_counts(df: pd.DataFrame) -> dict:
     if df.empty or "Status" not in df.columns:
         return {"Total": 0, "Active": 0, "Scheduled": 0, "Expired": 0}
@@ -231,33 +270,52 @@ def calc_counts(df: pd.DataFrame) -> dict:
     }
 
 
-def metric_card(v: int, label: str, color: str = "blue") -> str:
-    return f'<div class="metric-card mc-{color}"><p class="metric-value">{int(v)}</p><p class="metric-label">{html.escape(label)}</p></div>'
-
-
 def row_key_predicate(row: Any) -> str:
+    email = esc(norm_email(row["Email"]))
+    group = esc(row["Group"])
+    created_key = esc(row["Created Key"])
     return (
-        f"LOWER(UPN) = '{esc(norm_email(row['Email']))}' "
-        f"AND USER_GROUP_NAME = '{esc(row['Group'])}' "
-        f"AND COALESCE(TO_VARCHAR(CREATED_TS, '{TS_FMT}'), '') = '{esc(row['Created Key'])}'"
+        f"LOWER(UPN) = '{email}' "
+        f"AND USER_GROUP_NAME = '{group}' "
+        f"AND COALESCE(TO_VARCHAR(CREATED_TS, '{TS_FMT}'), '') = '{created_key}'"
     )
 
 
-def require_selected_row(s: Session, row: Any) -> None:
+def selected_row_count(s: Session, row: Any) -> int:
     df = run_df(s, f"SELECT COUNT(*) AS C FROM {TABLE_NAME} WHERE {row_key_predicate(row)}")
-    count = int(df.iloc[0, 0])
+    return int(df.iloc[0, 0])
+
+
+def require_selected_row(s: Session, row: Any) -> None:
+    count = selected_row_count(s, row)
     if count != 1:
-        raise RuntimeError(f"Selected record match count is {count}. Refresh the search and try again.")
+        raise RuntimeError(
+            f"Selected record match count is {count}. Refresh the search and try again."
+        )
 
 
-def find_overlaps(s: Session, email: str, groups: List[str], start_dt: dt.datetime, end_dt: dt.datetime, exclude_row: Any = None) -> pd.DataFrame:
+def find_overlaps(
+    s: Session,
+    email: str,
+    groups: List[str],
+    start_dt: dt.datetime,
+    end_dt: dt.datetime,
+    exclude_row: Any = None,
+) -> pd.DataFrame:
     if not groups:
         return pd.DataFrame()
     group_values = ", ".join(f"'{esc(g)}'" for g in groups)
-    exclude = f" AND NOT ({row_key_predicate(exclude_row)})" if exclude_row is not None else ""
-    return run_df(s, f"""
-        SELECT UPN AS "Email", USER_GROUP_NAME AS "Group", FROM_DATE AS "Existing From",
-               TO_DATE AS "Existing To", {status_sql()} AS "Status"
+    exclude = ""
+    if exclude_row is not None:
+        exclude = f" AND NOT ({row_key_predicate(exclude_row)})"
+    return run_df(
+        s,
+        f"""
+        SELECT UPN AS "Email",
+               USER_GROUP_NAME AS "Group",
+               FROM_DATE AS "Existing From",
+               TO_DATE AS "Existing To",
+               {status_sql()} AS "Status"
         FROM {TABLE_NAME}
         WHERE LOWER(UPN) = '{esc(norm_email(email))}'
           AND USER_GROUP_NAME IN ({group_values})
@@ -265,38 +323,57 @@ def find_overlaps(s: Session, email: str, groups: List[str], start_dt: dt.dateti
           AND TO_DATE > {ts(start_dt)}
           {exclude}
         ORDER BY USER_GROUP_NAME, FROM_DATE
-    """)
+        """,
+    )
 
 
 def check_existing_current(s: Session, email: str, groups: List[str]) -> pd.DataFrame:
     if not groups:
         return pd.DataFrame()
     group_values = ", ".join(f"'{esc(g)}'" for g in groups)
-    return run_df(s, f"""
-        SELECT UPN AS "Email", USER_GROUP_NAME AS "Group", FROM_DATE AS "From Date",
-               TO_DATE AS "To Date", {status_sql()} AS "Status"
+    return run_df(
+        s,
+        f"""
+        SELECT UPN AS "Email",
+               USER_GROUP_NAME AS "Group",
+               FROM_DATE AS "From Date",
+               TO_DATE AS "To Date",
+               {status_sql()} AS "Status"
         FROM {TABLE_NAME}
         WHERE LOWER(UPN) = '{esc(norm_email(email))}'
           AND USER_GROUP_NAME IN ({group_values})
           AND TO_DATE > CURRENT_TIMESTAMP()
         ORDER BY USER_GROUP_NAME, FROM_DATE
-    """)
+        """,
+    )
 
 
-def insert_access(s: Session, email: str, groups: List[str], start_dt: dt.datetime, end_dt: dt.datetime, created_by: str) -> None:
+def insert_access(
+    s: Session,
+    email: str,
+    groups: List[str],
+    start_dt: dt.datetime,
+    end_dt: dt.datetime,
+    created_by: str,
+) -> None:
     rows = ",\n".join(
-        f"('{esc(norm_email(email))}', '{esc(g)}', {ts(start_dt)}, {ts(end_dt)}, CURRENT_TIMESTAMP(), '{esc(norm_email(created_by) or 'unknown')}', NULL, NULL)"
+        (
+            f"('{esc(norm_email(email))}', '{esc(g)}', {ts(start_dt)}, {ts(end_dt)}, "
+            f"CURRENT_TIMESTAMP(), '{esc(norm_email(created_by) or 'unknown')}', NULL, NULL)"
+        )
         for g in groups
     )
     try:
         s.sql("BEGIN").collect()
-        s.sql(f"""
+        s.sql(
+            f"""
             INSERT INTO {TABLE_NAME}
                 (UPN, USER_GROUP_NAME, FROM_DATE, TO_DATE, CREATED_TS, CREATED_BY, UPDATED_TS, UPDATED_BY)
             SELECT v.*
             FROM VALUES {rows}
                  AS v(UPN, USER_GROUP_NAME, FROM_DATE, TO_DATE, CREATED_TS, CREATED_BY, UPDATED_TS, UPDATED_BY)
-        """).collect()
+            """
+        ).collect()
         s.sql("COMMIT").collect()
     except Exception:
         try:
@@ -306,24 +383,35 @@ def insert_access(s: Session, email: str, groups: List[str], start_dt: dt.dateti
         raise
 
 
-def update_access_window(s: Session, row: Any, start_dt: dt.datetime, end_dt: dt.datetime, updated_by: str) -> None:
+def update_access_window(
+    s: Session,
+    row: Any,
+    start_dt: dt.datetime,
+    end_dt: dt.datetime,
+    updated_by: str,
+) -> None:
     require_selected_row(s, row)
     predicate = row_key_predicate(row)
-    s.sql(f"""
+    s.sql(
+        f"""
         UPDATE {TABLE_NAME}
         SET FROM_DATE = {ts(start_dt)},
             TO_DATE = {ts(end_dt)},
             UPDATED_TS = CURRENT_TIMESTAMP(),
             UPDATED_BY = '{esc(norm_email(updated_by) or 'unknown')}'
         WHERE {predicate}
-    """).collect()
-    verify = run_df(s, f"""
+        """
+    ).collect()
+    verify = run_df(
+        s,
+        f"""
         SELECT COUNT(*) AS C
         FROM {TABLE_NAME}
         WHERE {predicate}
           AND FROM_DATE = {ts(start_dt)}
           AND TO_DATE = {ts(end_dt)}
-    """)
+        """,
+    )
     if int(verify.iloc[0, 0]) != 1:
         raise RuntimeError("The selected record was not updated. Refresh the search and try again.")
 
@@ -331,20 +419,25 @@ def update_access_window(s: Session, row: Any, start_dt: dt.datetime, end_dt: dt
 def remove_access(s: Session, row: Any, updated_by: str) -> None:
     require_selected_row(s, row)
     predicate = row_key_predicate(row)
-    s.sql(f"""
+    s.sql(
+        f"""
         UPDATE {TABLE_NAME}
         SET TO_DATE = CURRENT_TIMESTAMP(),
             UPDATED_TS = CURRENT_TIMESTAMP(),
             UPDATED_BY = '{esc(norm_email(updated_by) or 'unknown')}'
         WHERE {predicate}
           AND TO_DATE > CURRENT_TIMESTAMP()
-    """).collect()
-    verify = run_df(s, f"""
+        """
+    ).collect()
+    verify = run_df(
+        s,
+        f"""
         SELECT COUNT(*) AS C
         FROM {TABLE_NAME}
         WHERE {predicate}
           AND TO_DATE <= CURRENT_TIMESTAMP()
-    """)
+        """,
+    )
     if int(verify.iloc[0, 0]) != 1:
         raise RuntimeError("The selected record was not revoked. Refresh the search and try again.")
 
@@ -371,6 +464,10 @@ def set_flash_ok(message: str) -> None:
     st.session_state["_flash_ok"] = message
 
 
+def set_flash_err(message: str) -> None:
+    st.session_state["_flash_err"] = message
+
+
 def show_flash() -> None:
     ok = st.session_state.pop("_flash_ok", None)
     err = st.session_state.pop("_flash_err", None)
@@ -381,7 +478,8 @@ def show_flash() -> None:
 
 
 def render_header(email: str) -> None:
-    st.markdown(f"""
+    st.markdown(
+        f"""
         <div class="header-bar">
             <div>
                 <p class="header-title">BIW - POWER BI Reports Access Manager</p>
@@ -392,7 +490,9 @@ def render_header(email: str) -> None:
                 <p style="font-size:13px;color:#fff;font-weight:600;margin:2px 0 0;">{html.escape(email)}</p>
             </div>
         </div>
-    """, unsafe_allow_html=True)
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def view_tab(session: Session) -> None:
@@ -404,7 +504,7 @@ def view_tab(session: Session) -> None:
 
     c1, c2, _ = st.columns([1, 1, 2])
     with c1:
-        show_active = st.checkbox("Active / Scheduled", value=True, key="view_show_active")
+        show_active = st.checkbox("Active", value=True, key="view_show_active")
     with c2:
         show_expired = st.checkbox("Expired", value=False, key="view_show_expired")
 
@@ -416,7 +516,10 @@ def view_tab(session: Session) -> None:
 
     counts = calc_counts(df)
     cards = st.columns(4)
-    for col, (label, color) in zip(cards, [("Total", "blue"), ("Active", "green"), ("Scheduled", "amber"), ("Expired", "red")]):
+    for col, (label, color) in zip(
+        cards,
+        [("Total", "blue"), ("Active", "green"), ("Scheduled", "amber"), ("Expired", "red")],
+    ):
         with col:
             st.markdown(metric_card(counts[label], label, color), unsafe_allow_html=True)
 
@@ -425,9 +528,16 @@ def view_tab(session: Session) -> None:
 
 
 def provision_tab(session: Session, created_by: str) -> None:
-    st.markdown('<p class="help-text">Use this tab to create new access only. To extend or modify existing access, use the Manage tab.</p>', unsafe_allow_html=True)
+    st.markdown(
+        '<p class="help-text">Use this tab to create new access only. To extend or modify existing access, use the Manage tab.</p>',
+        unsafe_allow_html=True,
+    )
     with st.form("provision_form", clear_on_submit=False):
-        email = st.text_input("User email (full address required)", placeholder="name@coles.com.au", key="prov_email")
+        email = st.text_input(
+            "User email (full address required)",
+            placeholder="name@coles.com.au",
+            key="prov_email",
+        )
         groups = selected_groups("prov_grp")
         now = dt.datetime.now()
 
@@ -435,13 +545,22 @@ def provision_tab(session: Session, created_by: str) -> None:
         with c1:
             from_date = st.date_input("Start date", value=now.date(), key="prov_fd")
         with c2:
-            from_time = st.time_input("Start time", value=dt.time(9, 0), step=dt.timedelta(minutes=15), key="prov_ft")
+            from_time = st.time_input(
+                "Start time",
+                value=dt.time(9, 0),
+                step=dt.timedelta(minutes=15),
+                key="prov_ft",
+            )
 
         c3, c4 = st.columns(2)
         with c3:
-            to_date = st.date_input("End date", value=DEFAULT_END_DATE, min_value=now.date(), max_value=DEFAULT_END_DATE, key="prov_td")
+            st.markdown("End date")
+            st.markdown('<div class="readonly-field">31 Dec 2099</div>', unsafe_allow_html=True)
+            to_date = DEFAULT_END_DATE
         with c4:
-            to_time = st.time_input("End time", value=DEFAULT_END_TIME, step=dt.timedelta(minutes=15), key="prov_tt")
+            st.markdown("End time")
+            st.markdown('<div class="readonly-field">11:59 PM</div>', unsafe_allow_html=True)
+            to_time = DEFAULT_END_TIME
 
         submitted = st.form_submit_button("Provision Access", use_container_width=True)
 
@@ -466,13 +585,19 @@ def provision_tab(session: Session, created_by: str) -> None:
     try:
         existing_current = check_existing_current(session, clean, groups)
         if not existing_current.empty:
-            st.error("Duplicate access blocked. This user already has active or scheduled access for one or more selected groups. Use Manage to extend or revoke it.")
+            st.error(
+                "Duplicate access blocked. This user already has active or scheduled access "
+                "for one or more selected groups. Use Manage to extend or revoke it."
+            )
             show_table(existing_current)
             return
 
         overlaps = find_overlaps(session, clean, groups, start_dt, end_dt)
         if not overlaps.empty:
-            st.error("Duplicate access blocked. The requested access window overlaps existing access for one or more selected groups.")
+            st.error(
+                "Duplicate access blocked. The requested access window overlaps existing access "
+                "for one or more selected groups."
+            )
             show_table(overlaps)
             return
     except Exception as ex:
@@ -481,7 +606,10 @@ def provision_tab(session: Session, created_by: str) -> None:
 
     try:
         insert_access(session, clean, groups, start_dt, end_dt, created_by)
-        set_flash_ok(f"Access enabled for {clean}. Groups: {', '.join(groups)}. Window: {fmt_dt(start_dt)} to {fmt_dt(end_dt)}.")
+        set_flash_ok(
+            f"Access enabled for {clean}. Groups: {', '.join(groups)}. "
+            f"Window: {fmt_dt(start_dt)} to {fmt_dt(end_dt)}."
+        )
         st.rerun()
     except Exception as ex:
         st.error(f"Provision failed: {ex}")
@@ -508,16 +636,33 @@ def manage_tab(session: Session, updated_by: str) -> None:
     show_table(df)
 
     st.markdown('<div class="section-label">Select record</div>', unsafe_allow_html=True)
-    labels = [f"{r['Email']} | {r['Group']} | {r['Status']} | {fmt_dt(r['From Date'])} - {fmt_dt(r['To Date'])}" for _, r in df.iterrows()]
-    idx = st.selectbox("Record", options=list(range(len(df))), format_func=lambda i: labels[i], key="manage_rec")
+    labels = [
+        f"{r['Email']} | {r['Status']} | {r['Group']} | {fmt_dt(r['From Date'])} to {fmt_dt(r['To Date'])}"
+        for _, r in df.iterrows()
+    ]
+    idx = st.selectbox(
+        "Record",
+        options=list(range(len(df))),
+        format_func=lambda i: labels[i],
+        key="manage_rec",
+    )
     row = df.iloc[idx]
     cur_from = as_dt(row["From Date"]) or dt.datetime.now()
     cur_to = as_dt(row["To Date"]) or dt.datetime.combine(DEFAULT_END_DATE, DEFAULT_END_TIME)
     min_end_date = min(cur_from.date(), cur_to.date())
     max_end_date = max(cur_to.date(), DEFAULT_END_DATE)
-    sfx = re.sub(r"[^A-Za-z0-9_]", "_", f"{row['Email']}_{row['Group']}_{row['Created Key']}")[:80]
+    key_raw = f"{row['Email']}_{row['Group']}_{row['Created Key']}"
+    sfx = re.sub(r"[^A-Za-z0-9_]", "_", key_raw)[:80]
 
-    st.markdown(f"**Selected:** {row['Group']} for {row['Email']} - Status: {row['Status']}")
+    st.markdown(
+        f"""
+        <div class="selected-record">
+            <p class="selected-record-title">{html.escape(str(row['Email']))}</p>
+            <p class="selected-record-meta">{html.escape(str(row['Group']))} | {html.escape(str(row['Status']))} | {html.escape(fmt_dt(row['From Date']))} to {html.escape(fmt_dt(row['To Date']))}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     action_col1, action_col2 = st.columns(2)
 
@@ -525,27 +670,54 @@ def manage_tab(session: Session, updated_by: str) -> None:
         st.markdown('<div class="section-label">Extend / modify dates</div>', unsafe_allow_html=True)
         with st.form(f"upd_{sfx}"):
             new_fd = st.date_input("Start date", value=cur_from.date(), key=f"ufd_{sfx}")
-            new_ft = st.time_input("Start time", value=cur_from.time().replace(microsecond=0), step=dt.timedelta(minutes=15), key=f"uft_{sfx}")
-            new_td = st.date_input("End date", value=cur_to.date(), min_value=min_end_date, max_value=max_end_date, key=f"utd_{sfx}")
-            new_tt = st.time_input("End time", value=cur_to.time().replace(microsecond=0), step=dt.timedelta(minutes=15), key=f"utt_{sfx}")
+            new_ft = st.time_input(
+                "Start time",
+                value=cur_from.time().replace(microsecond=0),
+                step=dt.timedelta(minutes=15),
+                key=f"uft_{sfx}",
+            )
+            new_td = st.date_input(
+                "End date",
+                value=cur_to.date(),
+                min_value=min_end_date,
+                max_value=max_end_date,
+                key=f"utd_{sfx}",
+            )
+            new_tt = st.time_input(
+                "End time",
+                value=cur_to.time().replace(microsecond=0),
+                step=dt.timedelta(minutes=15),
+                key=f"utt_{sfx}",
+            )
             do_update = st.form_submit_button("Update Dates", use_container_width=True)
 
     with action_col2:
         st.markdown('<div class="section-label">Revoke access</div>', unsafe_allow_html=True)
         if row["Status"] in ("Active", "Scheduled"):
-            st.warning(f"Revoke will immediately expire access for **{row['Group']}**.")
+            st.warning("This will immediately terminate access for the user.")
             revoke_key = f"{row['Email']}|{row['Group']}|{row['Created Key']}"
             if st.session_state.get("_confirm_rm") != revoke_key:
                 if st.button("Revoke Access", use_container_width=True, key=f"rm_btn_{sfx}", type="primary"):
                     st.session_state["_confirm_rm"] = revoke_key
                     st.rerun()
             else:
-                st.markdown('<div class="danger-zone"><p>Are you sure? This will expire access immediately.</p></div>', unsafe_allow_html=True)
-                if st.button("Yes - Revoke Now", use_container_width=True, key=f"yes_rm_{sfx}", type="primary"):
+                st.markdown(
+                    '<div class="danger-zone"><p>Are you sure? This will expire access immediately.</p></div>',
+                    unsafe_allow_html=True,
+                )
+                if st.button(
+                    "Yes - Revoke Now",
+                    use_container_width=True,
+                    key=f"yes_rm_{sfx}",
+                    type="primary",
+                ):
                     try:
                         remove_access(session, row, updated_by)
                         st.session_state["_confirm_rm"] = None
-                        set_flash_ok(f"Access revoked for {row['Email']} / {row['Group']}. It has been expired immediately.")
+                        set_flash_ok(
+                            f"Access revoked for {row['Email']} / {row['Group']}. "
+                            "It has been expired immediately."
+                        )
                         st.rerun()
                     except Exception as ex:
                         st.error(f"Revoke failed: {ex}")
@@ -564,7 +736,14 @@ def manage_tab(session: Session, updated_by: str) -> None:
             return
 
         try:
-            overlaps = find_overlaps(session, row["Email"], [row["Group"]], new_start, new_end, exclude_row=row)
+            overlaps = find_overlaps(
+                session,
+                row["Email"],
+                [row["Group"]],
+                new_start,
+                new_end,
+                exclude_row=row,
+            )
             if not overlaps.empty:
                 st.error("Update blocked. The new date window overlaps another record for this user/group.")
                 show_table(overlaps)
@@ -573,7 +752,11 @@ def manage_tab(session: Session, updated_by: str) -> None:
             old_from = fmt_dt(row["From Date"])
             old_to = fmt_dt(row["To Date"])
             update_access_window(session, row, new_start, new_end, updated_by)
-            set_flash_ok(f"Dates updated for {row['Email']} / {row['Group']}. Previous: {old_from} to {old_to}. New: {fmt_dt(new_start)} to {fmt_dt(new_end)}.")
+            set_flash_ok(
+                f"Dates updated for {row['Email']} / {row['Group']}. "
+                f"Previous: {old_from} to {old_to}. "
+                f"New: {fmt_dt(new_start)} to {fmt_dt(new_end)}."
+            )
             st.rerun()
         except Exception as ex:
             st.error(f"Update failed: {ex}")
